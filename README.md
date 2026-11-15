@@ -20,14 +20,28 @@ The script installs a pinned, checksum-verified release, then runs `ops login`,
 ```
 ops login | doctor | clone [--dir DIR] | status | version
 ops setup-agents [--dry-run]
-ops token [source|dispatch]          ops gh <args...>
+ops token [source|dispatch]          ops gh [--] <args...>
 ops git-credential <get|store|erase> (configured by `ops login`)
-ops plan <stack>                     ops apply <stack>
+ops plan <stack> [--admin]           ops apply <stack> [--admin [--confirm-destroy N]]
 ops deploy <app> [revision]          ops rollback <app>
 ops logs <app> [service] [--since 30m]
 ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
+ops host <app> exec <file|->         (bash script as root on the host)
 ops run <run-id|url>                 ops mcp
 ```
+
+Standard `plan`/`apply` keep the stack's guardrails (no deletes, replaces or IAM,
+sizes within the envelope). `--admin` runs in platform-control's `ops-admin`
+environment, which allows all of that; if the plan destroys anything,
+`--confirm-destroy` must equal the destroy count or the run fails before applying.
+Admin runs and `host exec` post an entry to the "Agent activity" issue in
+platform-control, so the owner sees every one. `ops gh` uses the source app, which is
+installed on all repositories (platform-control included) with code, workflow,
+secret, variable, environment and settings access.
+
+MCP tools: `ops_status`, `ops_plan`/`ops_apply` (`admin`, `confirm_destroy`),
+`ops_deploy`, `ops_rollback`, `ops_logs`, `ops_host` (`command: exec` + `script`),
+`ops_gh` (`args`), `ops_run`.
 
 `ops setup-agents` registers `ops mcp` (by the binary's absolute path) with the
 coding agents it finds: Claude Code (`claude mcp add --scope user`), Codex
@@ -42,16 +56,22 @@ run concluded `success`.
 
 ## Security model
 
+Agents have full standing authority; the design keeps machines disposable and every
+privileged action logged, not limited.
+
 - No provider (OCI, Cloudflare, ...) credentials on disk: privileged work runs only in
-  `n0ci/platform-control` workflows, which hold the cloud trust via OIDC.
-- Two GitHub Apps with split installations: `source` (app repos + `platform`) for
-  git/gh, `dispatch` (only `platform-control`, actions but no contents) for workflows.
+  `n0ci/platform-control` workflows, which hold the cloud trust via OIDC (OCI) or
+  environment secrets (Cloudflare).
+- Two GitHub Apps: `source` (all repositories) for git/gh, `dispatch`
+  (`platform-control`, actions but no contents) for workflows. Deleting an app key in
+  GitHub revokes a machine's access.
 - Installation tokens are minted on demand, live about an hour, and are kept in process
   memory only; git gets them through `ops git-credential` and never stores them.
 - The bootstrap bundle (app keys) is stored in the macOS login keychain (or a 0600 file
   under `$XDG_CONFIG_HOME/ops` on Linux) and is never printed.
-- Every input is validated client-side and again by the workflows; ops can only request
-  the fixed actions the executor offers.
+- Every input is validated client-side and again by the workflows; destructive admin
+  applies need an exact destroy count, and the workflows refuse changes to the
+  executor's own OCI trust and admin policy so a mistake cannot lock agents out.
 
 ## Development
 

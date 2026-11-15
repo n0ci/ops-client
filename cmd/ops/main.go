@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -19,22 +20,29 @@ var version = "dev"
 
 const usage = `ops — GitHub-only ops for this machine (no cloud credentials)
 
+Admin actions (--admin, host exec) are logged to the "Agent activity" issue
+in platform-control.
+
 Setup:
   ops login                      store bootstrap bundle (clipboard on macOS, else stdin); configure git
   ops doctor                     check bundle, tokens, access, git helper, tools
   ops clone [--dir DIR]          clone missing inventory repos into the workdir
   ops token [source|dispatch]    print a fresh installation token
-  ops gh <args...>               run gh with GH_TOKEN=<source token>
+  ops gh [--] <args...>          run gh with GH_TOKEN=<source token> (all repos, incl. secrets/settings)
   ops git-credential <get|store|erase>   git credential helper
   ops setup-agents [--dry-run]   register "ops mcp" with Claude Code, Codex, OpenCode
 
 Executor (platform-control workflows; prints "Run: <url>" first):
-  ops plan <stack>               terraform plan at platform main HEAD
-  ops apply <stack>              terraform plan + apply at platform main HEAD
+  ops plan <stack> [--admin]     terraform plan at platform main HEAD
+  ops apply <stack> [--admin] [--confirm-destroy N]
+                                 terraform plan + apply at platform main HEAD; --admin
+                                 allows deletes, replaces and IAM; N must equal the
+                                 plan's destroy count
   ops deploy <app> [revision]    deploy (empty revision = latest successful build)
   ops rollback <app>
   ops logs <app> [service] [--since 30m]
   ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
+  ops host <app> exec <file|->   run a bash script as root on the host (admin)
   ops run <run-id|url>           reattach to a run and print its results
   ops status                     recent runs + app health
   ops mcp                        MCP stdio server exposing the commands as tools
@@ -118,14 +126,7 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		t, err := o.GH.Token(ctx, "source")
-		if err != nil {
-			return err
-		}
-		c := exec.CommandContext(ctx, "gh", args...)
-		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-		c.Env = append(os.Environ(), "GH_TOKEN="+t.Value, "GH_HOST=github.com")
-		return c.Run()
+		return o.RunGH(ctx, args, os.Stdin, os.Stdout, os.Stderr)
 	case "git-credential":
 		if len(args) != 1 {
 			return errors.New("usage: ops git-credential <get|store|erase>")
@@ -144,6 +145,8 @@ func run(ctx context.Context, args []string) error {
 	timeout := fs.Duration("timeout", ops.DefaultTimeout, "overall wait timeout")
 	since := fs.String("since", "30m", "log window for logs/host (e.g. 30m, 2h, 1d)")
 	dir := fs.String("dir", "", "clone target directory (default: bundle workdir)")
+	admin := fs.Bool("admin", false, "plan/apply: admin mode (deletes, IAM, any resource type)")
+	confirm := fs.Int("confirm-destroy", 0, "plan/apply --admin: number of resources the plan may destroy")
 	pos, err := parse(fs, args)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -152,6 +155,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	opt := ops.WaitOpts{NoWait: *noWait, Timeout: *timeout}
+	if (*admin || *confirm != 0) && cmd != "plan" && cmd != "apply" {
+		return errors.New("--admin and --confirm-destroy apply only to plan/apply")
+	}
 
 	spec, ok := arity[cmd]
 	if !ok {
@@ -189,7 +195,7 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprintln(out, t.Value)
 		return nil
 	case "plan", "apply":
-		return o.Infra(ctx, out, cmd, at(0), opt)
+		return o.Infra(ctx, out, cmd, at(0), ops.InfraMode{Admin: *admin, ConfirmDestroy: *confirm}, opt)
 	case "deploy":
 		return o.Deploy(ctx, out, "deploy", at(0), at(1), opt)
 	case "rollback":
@@ -197,6 +203,13 @@ func run(ctx context.Context, args []string) error {
 	case "logs":
 		return o.Host(ctx, out, at(0), "logs", at(1), *since, opt)
 	case "host":
+		if at(1) == "exec" {
+			script, err := readScript(at(2))
+			if err != nil {
+				return err
+			}
+			return o.HostExec(ctx, out, at(0), script, opt)
+		}
 		return o.Host(ctx, out, at(0), at(1), at(2), *since, opt)
 	case "run":
 		return o.Reattach(ctx, out, at(0), *timeout)
@@ -214,12 +227,12 @@ var arity = map[string]struct {
 }{
 	"clone":    {0, 0, "clone [--dir DIR]"},
 	"token":    {0, 1, "token [source|dispatch]"},
-	"plan":     {1, 1, "plan <stack> [--no-wait] [--timeout 45m]"},
-	"apply":    {1, 1, "apply <stack> [--no-wait] [--timeout 45m]"},
+	"plan":     {1, 1, "plan <stack> [--admin [--confirm-destroy N]] [--no-wait] [--timeout 45m]"},
+	"apply":    {1, 1, "apply <stack> [--admin [--confirm-destroy N]] [--no-wait] [--timeout 45m]"},
 	"deploy":   {1, 2, "deploy <app> [revision]"},
 	"rollback": {1, 1, "rollback <app>"},
 	"logs":     {1, 2, "logs <app> [service] [--since 30m]"},
-	"host":     {2, 3, "host <app> <status|ps|df|journal|errors> [target]"},
+	"host":     {2, 3, "host <app> <status|ps|df|journal|errors> [target] | host <app> exec <file|->"},
 	"run":      {1, 1, "run <run-id|url> [--timeout 45m]"},
 	"status":   {0, 0, "status"},
 	"mcp":      {0, 0, "mcp"},
@@ -231,4 +244,15 @@ func load() (*ops.Ops, error) {
 		return nil, err
 	}
 	return ops.New(b), nil
+}
+
+// readScript reads an exec script from a file, or from stdin for "-".
+func readScript(path string) ([]byte, error) {
+	switch path {
+	case "":
+		return nil, errors.New("usage: ops host <app> exec <file|->")
+	case "-":
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }

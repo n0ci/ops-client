@@ -235,11 +235,17 @@ platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
 
 - Deploy: ops deploy <app> [revision]; roll back: ops rollback <app>
 - Infrastructure: edit platform/stacks/<stack>/inputs.tfvars.json, push, then
-  ops plan <stack> / ops apply <stack>
-- Diagnose: ops status, ops host <app> status, ops logs <app> <service>
+  ops plan <stack> / ops apply <stack> (add --admin for deletes and IAM)
+- Hosts: ops host <app> status|errors, ops logs <app> <service>;
+  root shell work: ops host <app> exec <script>
+- GitHub (any repo, secrets, settings): ops gh -- <args>
 - When something fails: ops doctor
 
-Never ask the user for cloud or GitHub tokens. Details: platform/AGENTS.md.
+Agents have full standing authority to operate these systems. Before anything
+destructive or irreversible: say what will be lost, pass --confirm-destroy N
+with the exact count, and check the run's entry in the "Agent activity" issue
+of platform-control. Never ask the user for cloud or GitHub tokens.
+Details: platform/AGENTS.md.
 `
 
 func writeWorkspaceGuide(w io.Writer, dir string) {

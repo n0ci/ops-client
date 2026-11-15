@@ -2,7 +2,9 @@
 package ops
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -241,20 +243,53 @@ func (o *Ops) PlatformHead(ctx context.Context) (string, error) {
 	return c.SHA, ValidSHA(c.SHA)
 }
 
+// InfraMode selects the executor path for plan/apply. Admin runs in the
+// ops-admin environment, which may delete, replace and change IAM; every
+// destroyed resource must be confirmed by count (ConfirmDestroy).
+type InfraMode struct {
+	Admin          bool
+	ConfirmDestroy int
+}
+
+func (m InfraMode) inputs() (map[string]string, error) {
+	if m.ConfirmDestroy < 0 {
+		return nil, fmt.Errorf("invalid --confirm-destroy %d", m.ConfirmDestroy)
+	}
+	if !m.Admin {
+		if m.ConfirmDestroy != 0 {
+			return nil, errors.New("--confirm-destroy needs --admin")
+		}
+		return nil, nil // standard: keep the inputs older workflows accept
+	}
+	return map[string]string{"mode": "admin", "confirm_destroy": strconv.Itoa(m.ConfirmDestroy)}, nil
+}
+
 // Infra dispatches infra.yml (action "plan" or "apply") at platform main HEAD.
-func (o *Ops) Infra(ctx context.Context, w io.Writer, action, stack string, opt WaitOpts) error {
+func (o *Ops) Infra(ctx context.Context, w io.Writer, action, stack string, m InfraMode, opt WaitOpts) error {
 	if err := ValidStack(stack); err != nil {
 		return err
 	}
 	if action != "plan" && action != "apply" {
 		return fmt.Errorf("invalid infra action %q", action)
 	}
+	extra, err := m.inputs()
+	if err != nil {
+		return err
+	}
 	ref, err := o.PlatformHead(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve platform main: %w", err)
 	}
-	fmt.Fprintf(w, "%s %s at %s/%s@%s\n", action, stack, o.B.Owner, platformRepo, ref[:12])
-	return o.Dispatch(ctx, w, "infra.yml", map[string]string{"stack": stack, "platform_ref": ref, "action": action}, opt)
+	in := map[string]string{"stack": stack, "platform_ref": ref, "action": action}
+	for k, v := range extra {
+		in[k] = v
+	}
+	label := action
+	if m.Admin {
+		label += " (admin)"
+	}
+	fmt.Fprintf(w, "%s %s at %s/%s@%s\n", label, stack, o.B.Owner, platformRepo, ref[:12])
+	return o.Dispatch(ctx, w, "infra.yml", in, opt)
 }
 
 // Deploy dispatches deploy.yml. action is "deploy" or "rollback"; an empty
@@ -283,4 +318,23 @@ func (o *Ops) Host(ctx context.Context, w io.Writer, app, command, target, since
 		}
 	}
 	return o.Dispatch(ctx, w, "host.yml", map[string]string{"app": app, "command": command, "target": target, "since": since}, opt)
+}
+
+// MaxScriptB64 is host.yml's limit for the base64-encoded exec script.
+const MaxScriptB64 = 48000
+
+// HostExec runs script as root on the app's host (host.yml command exec, in
+// the ops-admin environment).
+func (o *Ops) HostExec(ctx context.Context, w io.Writer, app string, script []byte, opt WaitOpts) error {
+	if err := ValidApp(app); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(script)) == 0 {
+		return errors.New("empty script")
+	}
+	enc := base64.StdEncoding.EncodeToString(script)
+	if len(enc) > MaxScriptB64 {
+		return fmt.Errorf("script is %d bytes base64-encoded; the limit is %d", len(enc), MaxScriptB64)
+	}
+	return o.Dispatch(ctx, w, "host.yml", map[string]string{"app": app, "command": "exec", "script_b64": enc}, opt)
 }

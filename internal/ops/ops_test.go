@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -305,7 +306,7 @@ func TestPlanFlow(t *testing.T) {
 	f := newFake(t, "success")
 	o := testOps(t)
 	var out bytes.Buffer
-	if err := o.Infra(context.Background(), &out, "plan", "abfahrt", WaitOpts{}); err != nil {
+	if err := o.Infra(context.Background(), &out, "plan", "abfahrt", InfraMode{}, WaitOpts{}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	got := out.String()
@@ -329,6 +330,9 @@ func TestPlanFlow(t *testing.T) {
 	}
 	if ValidRequestID(fmt.Sprint(f.inputs["request_id"])) != nil {
 		t.Errorf("request_id = %v", f.inputs["request_id"])
+	}
+	if _, ok := f.inputs["mode"]; ok {
+		t.Errorf("standard plan sent mode: %v", f.inputs)
 	}
 	if len(f.blobAuth) != 2 || f.blobAuth[0] != "" || f.blobAuth[1] != "" {
 		t.Errorf("log blob requests carried auth: %q", f.blobAuth)
@@ -369,8 +373,14 @@ func TestInvalidInputsNeverDispatch(t *testing.T) {
 	o := testOps(t)
 	ctx, w := context.Background(), &bytes.Buffer{}
 	for i, err := range []error{
-		o.Infra(ctx, w, "plan", "Bad Stack", WaitOpts{}),
-		o.Infra(ctx, w, "destroy", "abfahrt", WaitOpts{}),
+		o.Infra(ctx, w, "plan", "Bad Stack", InfraMode{}, WaitOpts{}),
+		o.Infra(ctx, w, "destroy", "abfahrt", InfraMode{}, WaitOpts{}),
+		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{ConfirmDestroy: 1}, WaitOpts{}),
+		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{Admin: true, ConfirmDestroy: -1}, WaitOpts{}),
+		o.Host(ctx, w, "abfahrt", "exec", "", "", WaitOpts{}),
+		o.HostExec(ctx, w, "abfahrt", []byte(" \n"), WaitOpts{}),
+		o.HostExec(ctx, w, "nope", []byte("id"), WaitOpts{}),
+		o.HostExec(ctx, w, "abfahrt", bytes.Repeat([]byte("x"), MaxScriptB64), WaitOpts{}),
 		o.Deploy(ctx, w, "deploy", "nope", "", WaitOpts{}),
 		o.Deploy(ctx, w, "deploy", "abfahrt", "HEAD", WaitOpts{}),
 		o.Host(ctx, w, "abfahrt", "shell", "", "", WaitOpts{}),
@@ -429,5 +439,60 @@ func TestConfigureGit(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), " git-credential\"") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestAdminApplyInputs(t *testing.T) {
+	f := newFake(t, "success")
+	o := testOps(t)
+	var out bytes.Buffer
+	if err := o.Infra(context.Background(), &out, "apply", "cloudflare", InfraMode{Admin: true, ConfirmDestroy: 2}, WaitOpts{NoWait: true}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.HasPrefix(out.String(), "apply (admin) cloudflare at n0ci/platform@") {
+		t.Errorf("output = %q", out.String())
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inputs["mode"] != "admin" || f.inputs["confirm_destroy"] != "2" || f.inputs["action"] != "apply" {
+		t.Errorf("inputs = %v", f.inputs)
+	}
+}
+
+func TestHostExecInputs(t *testing.T) {
+	f := newFake(t, "success")
+	o := testOps(t)
+	script := []byte("id\nwhoami\n")
+	if err := o.HostExec(context.Background(), &bytes.Buffer{}, "imoutfyi", script, WaitOpts{NoWait: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	got, _ := base64.StdEncoding.DecodeString(fmt.Sprint(f.inputs["script_b64"]))
+	if f.inputs["_workflow"] != "host.yml" || f.inputs["command"] != "exec" || f.inputs["app"] != "imoutfyi" || string(got) != string(script) {
+		t.Errorf("inputs = %v", f.inputs)
+	}
+}
+
+func TestGHArgsAndEnv(t *testing.T) {
+	if got := GHArgs([]string{"--", "pr", "list"}); strings.Join(got, " ") != "pr list" {
+		t.Errorf("GHArgs = %q", got)
+	}
+	if got := GHArgs([]string{"api", "--", "x"}); len(got) != 3 {
+		t.Errorf("GHArgs kept only leading -- strip: %q", got)
+	}
+	env := ghEnv([]string{"PATH=/bin", "GH_TOKEN=personal", "GITHUB_TOKEN=x", "GH_HOST=ghe.example"}, "tok")
+	if strings.Join(env, " ") != "PATH=/bin GH_TOKEN=tok GH_HOST=github.com" {
+		t.Errorf("env = %q", env)
+	}
+}
+
+func TestMCPInfraMode(t *testing.T) {
+	m := infraMode(map[string]any{"admin": true, "confirm_destroy": float64(3)})
+	if !m.Admin || m.ConfirmDestroy != 3 {
+		t.Errorf("infraMode = %+v", m)
+	}
+	if m := infraMode(map[string]any{}); m.Admin || m.ConfirmDestroy != 0 {
+		t.Errorf("default infraMode = %+v", m)
 	}
 }

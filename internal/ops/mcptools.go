@@ -21,6 +21,9 @@ func schema(required []string, props map[string]map[string]any) map[string]any {
 
 func str(desc string) map[string]any  { return map[string]any{"type": "string", "description": desc} }
 func boolean(d string) map[string]any { return map[string]any{"type": "boolean", "description": d} }
+func integer(d string) map[string]any {
+	return map[string]any{"type": "integer", "minimum": 0, "description": d}
+}
 
 func arg(a map[string]any, k string) string {
 	switch v := a[k].(type) {
@@ -33,9 +36,20 @@ func arg(a map[string]any, k string) string {
 }
 
 var (
-	appProp    = map[string]any{"type": "string", "enum": []string{"abfahrt", "imoutfyi"}}
-	noWaitProp = boolean("return right after dispatch (the run URL is still returned); reattach with ops_run")
+	appProp     = map[string]any{"type": "string", "enum": []string{"abfahrt", "imoutfyi"}}
+	noWaitProp  = boolean("return right after dispatch (the run URL is still returned); reattach with ops_run")
+	adminProp   = boolean("admin mode: allows deletes, replaces, IAM and any resource type; logged to the Agent activity issue")
+	confirmProp = integer("admin only: number of resources the plan destroys (must match, else the run fails)")
 )
+
+func infraMode(a map[string]any) InfraMode {
+	m := InfraMode{}
+	m.Admin, _ = a["admin"].(bool)
+	if n, ok := a["confirm_destroy"].(float64); ok {
+		m.ConfirmDestroy = int(n)
+	}
+	return m
+}
 
 // MCPServer exposes the ops commands as MCP tools. Each tool runs the same
 // functions as the CLI and returns their output as text.
@@ -58,16 +72,16 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 		},
 		{
 			Name: "ops_plan", Description: "Terraform plan for a stack at platform main HEAD (runs in platform-control). Returns OPS: changes=add,change,destroy.",
-			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name, e.g. abfahrt"), "no_wait": noWaitProp}),
+			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name, e.g. abfahrt"), "admin": adminProp, "confirm_destroy": confirmProp, "no_wait": noWaitProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
-				return o.Infra(ctx, sb, "plan", arg(a, "stack"), wait(a))
+				return o.Infra(ctx, sb, "plan", arg(a, "stack"), infraMode(a), wait(a))
 			}),
 		},
 		{
-			Name: "ops_apply", Description: "Terraform plan+apply for a stack at platform main HEAD. Mutates infrastructure; run ops_plan first.",
-			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name"), "no_wait": noWaitProp}),
+			Name: "ops_apply", Description: "Terraform plan+apply for a stack at platform main HEAD. Mutates infrastructure; run ops_plan first. Before destroying anything, say what will be lost.",
+			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name"), "admin": adminProp, "confirm_destroy": confirmProp, "no_wait": noWaitProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
-				return o.Infra(ctx, sb, "apply", arg(a, "stack"), wait(a))
+				return o.Infra(ctx, sb, "apply", arg(a, "stack"), infraMode(a), wait(a))
 			}),
 		},
 		{
@@ -92,13 +106,36 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 			}),
 		},
 		{
-			Name: "ops_host", Description: "Read-only host diagnostics: status, ps, df, journal (or logs).",
+			Name: "ops_host", Description: "Host diagnostics (status, ps, df, journal, logs, errors), or exec: run a bash script as root on the host (admin, logged).",
 			InputSchema: schema([]string{"app", "command"}, map[string]map[string]any{
-				"app": appProp, "command": {"type": "string", "enum": []string{"status", "ps", "df", "journal", "logs", "errors"}},
+				"app": appProp, "command": {"type": "string", "enum": []string{"status", "ps", "df", "journal", "logs", "errors", "exec"}},
 				"target": str("service/unit name (optional)"), "since": str("e.g. 30m (default 30m)"),
+				"script": str("exec only: bash script run as root"),
 			}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
+				if arg(a, "command") == "exec" {
+					return o.HostExec(ctx, sb, arg(a, "app"), []byte(arg(a, "script")), WaitOpts{})
+				}
 				return o.Host(ctx, sb, arg(a, "app"), arg(a, "command"), arg(a, "target"), arg(a, "since"), WaitOpts{})
+			}),
+		},
+		{
+			Name: "ops_gh", Description: "Run gh with the source app's installation token (all n0ci repos incl. platform-control: code, PRs, secrets, variables, settings). Returns stdout and stderr.",
+			InputSchema: schema([]string{"args"}, map[string]map[string]any{"args": {"type": "array", "items": map[string]any{"type": "string"}, "description": `gh arguments, e.g. ["secret","list","-R","n0ci/imoutfyi"]`}}),
+			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
+				raw, _ := a["args"].([]any)
+				args := make([]string, 0, len(raw))
+				for _, v := range raw {
+					s, ok := v.(string)
+					if !ok {
+						return fmt.Errorf("args must be strings")
+					}
+					args = append(args, s)
+				}
+				if len(args) == 0 {
+					return fmt.Errorf("args is empty")
+				}
+				return o.RunGH(ctx, args, strings.NewReader(""), sb, sb)
 			}),
 		},
 		{
