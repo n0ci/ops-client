@@ -4,11 +4,11 @@ repositories:
   - name: platform          # this repo: desired inputs, runbooks
   - name: platform-control  # owner-only executor (read/dispatch only)
   - name: ops-client        # public CLI + bootstrap
-  - name: abfahrt-backend
+  - name: abfahrt
   - name: imoutfyi
 apps:
   abfahrt:
-    repos: [abfahrt-backend]
+    repos: [abfahrt]
     host: abfahrt-db          # OCI A1 3 OCPU / 18 GB, eu-frankfurt-1, root compartment
     url: https://abfahrt.app
     api: https://api.abfahrt.app/v1/health/ready

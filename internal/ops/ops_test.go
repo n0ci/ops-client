@@ -172,7 +172,7 @@ func TestParseInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"platform", "platform-control", "ops-client", "abfahrt-backend", "imoutfyi"}; !equal(inv.Repos, want) {
+	if want := []string{"platform", "platform-control", "ops-client", "abfahrt", "imoutfyi"}; !equal(inv.Repos, want) {
 		t.Fatalf("repos = %q", inv.Repos)
 	}
 	if len(inv.Apps) != 2 || inv.Apps[0] != (AppInfo{"abfahrt", "https://abfahrt.app", "https://api.abfahrt.app/v1/health/ready"}) ||
