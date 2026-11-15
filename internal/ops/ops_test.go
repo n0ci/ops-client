@@ -539,3 +539,19 @@ func TestAllowCostInputs(t *testing.T) {
 		t.Errorf("inputs = %v", f.inputs)
 	}
 }
+
+func TestDeployWaitPending(t *testing.T) {
+	f := newFake(t, "success")
+	o := testOps(t)
+	if err := o.Deploy(context.Background(), &bytes.Buffer{}, "deploy", "abfahrt", "", WaitOpts{Pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	if f.inputs["_workflow"] != "deploy.yml" || f.inputs["wait"] != "true" {
+		t.Errorf("inputs = %v", f.inputs)
+	}
+	f.mu.Unlock()
+	if err := o.Deploy(context.Background(), &bytes.Buffer{}, "deploy", "imoutfyi", "", WaitOpts{Pending: true}); err == nil {
+		t.Error("--wait for imoutfyi accepted")
+	}
+}

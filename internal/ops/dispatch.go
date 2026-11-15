@@ -43,7 +43,13 @@ func New(b *bundle.Bundle) *Ops {
 type WaitOpts struct {
 	NoWait  bool
 	Timeout time.Duration
+	// Pending (deploy abfahrt only): keep waiting, up to 5 h, while the host
+	// defers the release during an import, instead of ending with state=pending.
+	Pending bool
 }
+
+// PendingTimeout bounds waiting for a deploy dispatched with Pending.
+const PendingTimeout = 6 * time.Hour
 
 // RunFailedError reports a run that completed without success.
 type RunFailedError struct {
@@ -383,7 +389,17 @@ func (o *Ops) Deploy(ctx context.Context, w io.Writer, action, app, revision str
 	if action != "deploy" && action != "rollback" {
 		return fmt.Errorf("invalid deploy action %q", action)
 	}
-	return o.Dispatch(ctx, w, "deploy.yml", map[string]string{"app": app, "action": action, "revision": revision}, opt)
+	inputs := map[string]string{"app": app, "action": action, "revision": revision}
+	if opt.Pending {
+		if app != "abfahrt" {
+			return fmt.Errorf("--wait applies only to abfahrt")
+		}
+		inputs["wait"] = "true"
+		if opt.Timeout <= DefaultTimeout {
+			opt.Timeout = PendingTimeout
+		}
+	}
+	return o.Dispatch(ctx, w, "deploy.yml", inputs, opt)
 }
 
 // Host dispatches host.yml for read-only diagnostics.

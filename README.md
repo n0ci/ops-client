@@ -23,7 +23,7 @@ ops setup-agents [--dry-run]
 ops token [source|dispatch]          ops gh [--] <args...>
 ops git-credential <get|store|erase> (configured by `ops login`)
 ops plan <stack> [--admin [--allow-cost]]   ops apply <stack> --plan ID [--admin --confirm-destroy N]
-ops deploy <app> [revision]          ops rollback <app>
+ops deploy <app> [revision] [--wait] ops rollback <app> [--wait]
 ops logs <app> [service] [--since 30m]
 ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
 ops host <app> exec <file|->         (bash script as root on the host)
@@ -41,13 +41,16 @@ in platform-control's `ops-admin` environment, which allows all of that; plan an
 apply must use the same mode, and `--confirm-destroy` must equal the plan's destroy
 count or the apply is refused. Admin plans also stay within the stack's free storage
 budget unless planned with `--admin --allow-cost` (that costs money).
+An Abfahrt deploy ends with `OPS: state=pending` and a non-zero exit while the host
+defers the release during an import; re-run it later, or pass `--wait` (MCP: `wait`)
+to have the executor keep waiting up to 5 h.
 Admin runs and `host exec` post an entry to the "Agent activity" issue in
 platform-control, so the owner sees every one. `ops gh` uses the source app, which is
 installed on all repositories (platform-control included) with code, workflow,
 secret, variable, environment and settings access.
 
 MCP tools: `ops_status`, `ops_plan` (`admin`, `allow_cost`), `ops_apply` (`plan`, `admin`, `allow_cost`, `confirm_destroy`),
-`ops_deploy`, `ops_rollback`, `ops_logs`, `ops_host` (`command: exec` + `script`),
+`ops_deploy` (`wait`), `ops_rollback` (`wait`), `ops_logs`, `ops_host` (`command: exec` + `script`),
 `ops_gh` (`args`), `ops_run`.
 
 `ops setup-agents` registers `ops mcp` (by the binary's absolute path) with the

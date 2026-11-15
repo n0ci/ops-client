@@ -44,8 +44,12 @@ Executor (platform-control workflows; prints "Run: <url>" first):
                                  the plan's destroy count. Without --plan: only plans.
                                  --allow-cost (admin plans): may exceed the stack's
                                  free storage budget, which costs money
-  ops deploy <app> [revision]    deploy (empty revision = latest successful build)
-  ops rollback <app>
+  ops deploy <app> [revision] [--wait]
+                                 deploy (empty revision = latest successful build);
+                                 --wait (abfahrt): keep waiting up to 5 h while an
+                                 import defers the release (without it: state=pending,
+                                 non-zero exit)
+  ops rollback <app> [--wait]
   ops logs <app> [service] [--since 30m]
   ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
   ops host <app> exec <file|->   run a bash script as root on the host (admin)
@@ -148,6 +152,7 @@ func run(ctx context.Context, args []string) error {
 
 	fs := flag.NewFlagSet("ops "+cmd, flag.ContinueOnError)
 	noWait := fs.Bool("no-wait", false, "return right after dispatch")
+	waitPending := fs.Bool("wait", false, "deploy/rollback abfahrt: keep waiting (up to 5 h) while an import defers the release")
 	timeout := fs.Duration("timeout", ops.DefaultTimeout, "overall wait timeout")
 	since := fs.String("since", "30m", "log window for logs/host (e.g. 30m, 2h, 1d)")
 	dir := fs.String("dir", "", "clone target directory (default: bundle workdir)")
@@ -162,7 +167,10 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	opt := ops.WaitOpts{NoWait: *noWait, Timeout: *timeout}
+	opt := ops.WaitOpts{NoWait: *noWait, Timeout: *timeout, Pending: *waitPending}
+	if *waitPending && cmd != "deploy" && cmd != "rollback" {
+		return errors.New("--wait applies only to deploy/rollback")
+	}
 	if (*admin || *confirm != 0) && cmd != "plan" && cmd != "apply" {
 		return errors.New("--admin and --confirm-destroy apply only to plan/apply")
 	}
@@ -243,8 +251,8 @@ var arity = map[string]struct {
 	"token":    {0, 1, "token [source|dispatch]"},
 	"plan":     {1, 1, "plan <stack> [--admin [--allow-cost] [--confirm-destroy N]] [--no-wait] [--timeout 45m]"},
 	"apply":    {1, 1, "apply <stack> --plan ID [--admin --confirm-destroy N] [--no-wait] [--timeout 45m]"},
-	"deploy":   {1, 2, "deploy <app> [revision]"},
-	"rollback": {1, 1, "rollback <app>"},
+	"deploy":   {1, 2, "deploy <app> [revision] [--wait]"},
+	"rollback": {1, 1, "rollback <app> [--wait]"},
 	"logs":     {1, 2, "logs <app> [service] [--since 30m]"},
 	"host":     {2, 3, "host <app> <status|ps|df|journal|errors> [target] | host <app> exec <file|->"},
 	"run":      {1, 1, "run <run-id|url> [--timeout 45m]"},

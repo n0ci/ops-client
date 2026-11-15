@@ -37,6 +37,7 @@ func arg(a map[string]any, k string) string {
 
 var (
 	appProp     = map[string]any{"type": "string", "enum": []string{"abfahrt", "imoutfyi"}}
+	pendingProp = boolean("abfahrt: keep waiting (up to 5 h) while an import defers the release")
 	noWaitProp  = boolean("return right after dispatch (the run URL is still returned); reattach with ops_run")
 	adminProp   = boolean("admin mode: allows deletes, replaces, IAM and any resource type; logged to the Agent activity issue")
 	confirmProp = integer("admin only: number of resources the plan destroys or replaces (must match, else the run fails)")
@@ -59,6 +60,11 @@ func infraMode(a map[string]any) InfraMode {
 // functions as the CLI and returns their output as text.
 func (o *Ops) MCPServer(version string) *mcp.Server {
 	wait := func(a map[string]any) WaitOpts { b, _ := a["no_wait"].(bool); return WaitOpts{NoWait: b} }
+	pendingWait := func(a map[string]any) WaitOpts {
+		opt := wait(a)
+		opt.Pending, _ = a["wait"].(bool)
+		return opt
+	}
 	run := func(f func(ctx context.Context, sb *strings.Builder, a map[string]any) error) func(context.Context, map[string]any) (string, error) {
 		return func(ctx context.Context, a map[string]any) (string, error) {
 			var sb strings.Builder
@@ -89,17 +95,17 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 			}),
 		},
 		{
-			Name: "ops_deploy", Description: "Deploy an app revision (40-hex SHA; empty = latest successful build on main).",
-			InputSchema: schema([]string{"app"}, map[string]map[string]any{"app": appProp, "revision": str("40-hex commit SHA or empty"), "no_wait": noWaitProp}),
+			Name: "ops_deploy", Description: "Deploy an app revision (40-hex SHA; empty = latest successful build on main). Abfahrt ends with state=pending (an error) while an import defers the release; rerun later, or pass wait to keep waiting up to 5 h.",
+			InputSchema: schema([]string{"app"}, map[string]map[string]any{"app": appProp, "revision": str("40-hex commit SHA or empty"), "no_wait": noWaitProp, "wait": pendingProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
-				return o.Deploy(ctx, sb, "deploy", arg(a, "app"), arg(a, "revision"), wait(a))
+				return o.Deploy(ctx, sb, "deploy", arg(a, "app"), arg(a, "revision"), pendingWait(a))
 			}),
 		},
 		{
 			Name: "ops_rollback", Description: "Roll an app back to its previous deployment.",
-			InputSchema: schema([]string{"app"}, map[string]map[string]any{"app": appProp, "no_wait": noWaitProp}),
+			InputSchema: schema([]string{"app"}, map[string]map[string]any{"app": appProp, "no_wait": noWaitProp, "wait": pendingProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
-				return o.Deploy(ctx, sb, "rollback", arg(a, "app"), "", wait(a))
+				return o.Deploy(ctx, sb, "rollback", arg(a, "app"), "", pendingWait(a))
 			}),
 		},
 		{

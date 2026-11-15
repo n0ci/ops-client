@@ -33,7 +33,7 @@ through `ops`, which authenticates as GitHub Apps. Run it from the shell.
 | Infra change | edit `n0ci/platform` (`stacks/<name>/inputs.tfvars.json`), push to main, then `ops plan <stack>`, then `ops apply <stack> --plan <id>` within 1 h (a newer commit or state change refuses it: re-plan) |
 | Deletes, replaces, IAM | `ops plan <stack> --admin`, then `ops apply <stack> --plan <id> --admin --confirm-destroy N` |
 | Executor/Terraform code | PR to `n0ci/platform-control`; merge after its CI passes |
-| Deploy | `ops deploy <app> [40-hex sha]` (no sha = latest successful build on main) |
+| Deploy | `ops deploy <app> [40-hex sha]` (no sha = latest successful build on main); Abfahrt exits non-zero with `OPS: state=pending` while an import defers the release: re-run later or add `--wait` (waits up to 5 h) |
 | Undo a deploy | `ops rollback <app>` |
 | Look at a host | `ops host <app> status\|ps\|df\|journal [unit]\|errors`, `ops logs <app> [service] --since 1h` |
 | Root on a host | `ops host <app> exec script.sh` (or `-` for stdin), bash as root |
