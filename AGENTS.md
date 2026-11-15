@@ -15,7 +15,8 @@ through `ops`, which authenticates as GitHub Apps. Run it from the shell.
   `ops host` / `ops logs`, and `ops host <app> exec` for root work.
 - You have the owner's standing authority to change production (apply, deploy,
   rollback, admin applies, host exec, GitHub settings and secrets). Run `ops plan`
-  first and report the `OPS: changes=` line before you apply.
+  first, report its `OPS: changes=` and any `OPS: destroy=`/`replace=` lines, then
+  apply that exact plan with `ops apply <stack> --plan <id>` (id from `OPS: plan_run=`).
 - Before anything destructive or irreversible (deleting resources or data, DB resets,
   replacing a VM): say what will be lost, use `--admin --confirm-destroy N` with the
   exact destroy count from the plan, and afterwards check the run's entry in the
@@ -29,8 +30,8 @@ through `ops`, which authenticates as GitHub Apps. Run it from the shell.
 | git clone/fetch/push | plain `git` over https; `ops` is the credential helper |
 | PRs, issues, workflows, secrets, settings (any repo, platform-control too) | `ops gh -- pr create ...`, `ops gh -- secret set NAME -R n0ci/<repo>` |
 | Token for a script | `GH_TOKEN=$(ops token) some-tool` (keep it in the environment, never on disk) |
-| Infra change | edit `n0ci/platform` (`stacks/<name>/inputs.tfvars.json`), push to main, then `ops plan <stack>`, then `ops apply <stack>` |
-| Deletes, replaces, IAM | `ops plan <stack> --admin`, then `ops apply <stack> --admin --confirm-destroy N` |
+| Infra change | edit `n0ci/platform` (`stacks/<name>/inputs.tfvars.json`), push to main, then `ops plan <stack>`, then `ops apply <stack> --plan <id>` within 1 h (a newer commit or state change refuses it: re-plan) |
+| Deletes, replaces, IAM | `ops plan <stack> --admin`, then `ops apply <stack> --plan <id> --admin --confirm-destroy N` |
 | Executor/Terraform code | PR to `n0ci/platform-control`; merge after its CI passes |
 | Deploy | `ops deploy <app> [40-hex sha]` (no sha = latest successful build on main) |
 | Undo a deploy | `ops rollback <app>` |

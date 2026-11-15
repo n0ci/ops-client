@@ -377,6 +377,8 @@ func TestInvalidInputsNeverDispatch(t *testing.T) {
 		o.Infra(ctx, w, "destroy", "abfahrt", InfraMode{}, WaitOpts{}),
 		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{ConfirmDestroy: 1}, WaitOpts{}),
 		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{Admin: true, ConfirmDestroy: -1}, WaitOpts{}),
+		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{PlanRun: "12a"}, WaitOpts{}),
+		o.Infra(ctx, w, "plan", "abfahrt", InfraMode{PlanRun: "123"}, WaitOpts{}),
 		o.Host(ctx, w, "abfahrt", "exec", "", "", WaitOpts{}),
 		o.HostExec(ctx, w, "abfahrt", []byte(" \n"), WaitOpts{}),
 		o.HostExec(ctx, w, "nope", []byte("id"), WaitOpts{}),
@@ -446,16 +448,42 @@ func TestAdminApplyInputs(t *testing.T) {
 	f := newFake(t, "success")
 	o := testOps(t)
 	var out bytes.Buffer
-	if err := o.Infra(context.Background(), &out, "apply", "cloudflare", InfraMode{Admin: true, ConfirmDestroy: 2}, WaitOpts{NoWait: true}); err != nil {
+	if err := o.Infra(context.Background(), &out, "apply", "cloudflare", InfraMode{Admin: true, ConfirmDestroy: 2, PlanRun: "43706653835"}, WaitOpts{NoWait: true}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if !strings.HasPrefix(out.String(), "apply (admin) cloudflare at n0ci/platform@") {
+	if !strings.HasPrefix(out.String(), "apply (admin) of plan 43706653835 cloudflare at n0ci/platform@") {
 		t.Errorf("output = %q", out.String())
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.inputs["mode"] != "admin" || f.inputs["confirm_destroy"] != "2" || f.inputs["action"] != "apply" {
+	if f.inputs["mode"] != "admin" || f.inputs["confirm_destroy"] != "2" || f.inputs["action"] != "apply" || f.inputs["plan_run"] != "43706653835" {
 		t.Errorf("inputs = %v", f.inputs)
+	}
+}
+
+func TestApplyWithoutPlanOnlyPlans(t *testing.T) {
+	f := newFake(t, "success")
+	f.logs[11] += "2026-11-15T10:00:01.0000000Z OPS: destroys=1\n2026-11-15T10:00:01.0000000Z OPS: plan_run=4242\n"
+	o := testOps(t)
+	var out bytes.Buffer
+	err := o.Infra(context.Background(), &out, "apply", "imout", InfraMode{Admin: true}, WaitOpts{})
+	if !errors.Is(err, ErrNotApplied) {
+		t.Fatalf("err = %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "  ops apply imout --plan 4242 --admin --confirm-destroy 1\n") {
+		t.Errorf("output = %s", out.String())
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inputs["action"] != "plan" || f.inputs["plan_run"] != nil {
+		t.Errorf("inputs = %v", f.inputs)
+	}
+}
+
+func TestParseOPS(t *testing.T) {
+	got := ParseOPS("Run: x\nOPS: plan_run=1\n  OPS: next=ops apply a --plan 1 (within 1h)\nOPS: result=noop\nOPS: result=success\n")
+	if got["plan_run"] != "1" || got["next"] != "ops apply a --plan 1 (within 1h)" || got["result"] != "success" {
+		t.Errorf("ParseOPS = %v", got)
 	}
 }
 
@@ -488,8 +516,8 @@ func TestGHArgsAndEnv(t *testing.T) {
 }
 
 func TestMCPInfraMode(t *testing.T) {
-	m := infraMode(map[string]any{"admin": true, "confirm_destroy": float64(3)})
-	if !m.Admin || m.ConfirmDestroy != 3 {
+	m := infraMode(map[string]any{"admin": true, "confirm_destroy": float64(3), "plan": "77"})
+	if !m.Admin || m.ConfirmDestroy != 3 || m.PlanRun != "77" {
 		t.Errorf("infraMode = %+v", m)
 	}
 	if m := infraMode(map[string]any{}); m.Admin || m.ConfirmDestroy != 0 {

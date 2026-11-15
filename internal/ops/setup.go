@@ -235,7 +235,8 @@ platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
 
 - Deploy: ops deploy <app> [revision]; roll back: ops rollback <app>
 - Infrastructure: edit platform/stacks/<stack>/inputs.tfvars.json, push, then
-  ops plan <stack> / ops apply <stack> (add --admin for deletes and IAM)
+  ops plan <stack>, then ops apply <stack> --plan <id> (the plan_run it printed;
+  for deletes and IAM add --admin to both and --confirm-destroy N to the apply)
 - Hosts: ops host <app> status|errors, ops logs <app> <service>;
   root shell work: ops host <app> exec <script>
 - GitHub (any repo, secrets, settings): ops gh -- <args>
@@ -244,7 +245,8 @@ platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
 Agents have full standing authority to operate these systems. Before anything
 destructive or irreversible: say what will be lost, pass --confirm-destroy N
 with the exact count, and check the run's entry in the "Agent activity" issue
-of platform-control. Never ask the user for cloud or GitHub tokens.
+of platform-control. Never ask the user for cloud or GitHub tokens, and never
+publish the owner's private email (commits use the GitHub noreply address).
 Details: platform/AGENTS.md.
 `
 

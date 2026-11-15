@@ -245,32 +245,55 @@ func (o *Ops) PlatformHead(ctx context.Context) (string, error) {
 
 // InfraMode selects the executor path for plan/apply. Admin runs in the
 // ops-admin environment, which may delete, replace and change IAM; every
-// destroyed resource must be confirmed by count (ConfirmDestroy).
+// destroyed resource must be confirmed by count (ConfirmDestroy). PlanRun is
+// the run id of an earlier plan; apply applies exactly that stored plan.
 type InfraMode struct {
 	Admin          bool
 	ConfirmDestroy int
+	PlanRun        string
 }
 
 func (m InfraMode) inputs() (map[string]string, error) {
 	if m.ConfirmDestroy < 0 {
 		return nil, fmt.Errorf("invalid --confirm-destroy %d", m.ConfirmDestroy)
 	}
+	in := map[string]string{}
+	if m.PlanRun != "" {
+		if err := ValidPlanRun(m.PlanRun); err != nil {
+			return nil, err
+		}
+		in["plan_run"] = m.PlanRun
+	}
 	if !m.Admin {
 		if m.ConfirmDestroy != 0 {
 			return nil, errors.New("--confirm-destroy needs --admin")
 		}
-		return nil, nil // standard: keep the inputs older workflows accept
+		return in, nil // standard: keep the inputs older workflows accept
 	}
-	return map[string]string{"mode": "admin", "confirm_destroy": strconv.Itoa(m.ConfirmDestroy)}, nil
+	in["mode"], in["confirm_destroy"] = "admin", strconv.Itoa(m.ConfirmDestroy)
+	return in, nil
 }
 
-// Infra dispatches infra.yml (action "plan" or "apply") at platform main HEAD.
+// ErrNotApplied is returned by an apply without a plan id: it only planned.
+var ErrNotApplied = errors.New("not applied")
+
+// Infra runs infra.yml at platform main HEAD. "plan" plans and stores the plan
+// (printing its id as OPS: plan_run=). "apply" with m.PlanRun applies exactly
+// that plan; without it, apply only plans and returns ErrNotApplied with the
+// command to apply the result.
 func (o *Ops) Infra(ctx context.Context, w io.Writer, action, stack string, m InfraMode, opt WaitOpts) error {
 	if err := ValidStack(stack); err != nil {
 		return err
 	}
 	if action != "plan" && action != "apply" {
 		return fmt.Errorf("invalid infra action %q", action)
+	}
+	if action == "plan" && m.PlanRun != "" {
+		return errors.New("--plan applies only to apply")
+	}
+	planOnly := action == "apply" && m.PlanRun == ""
+	if planOnly {
+		action = "plan"
 	}
 	extra, err := m.inputs()
 	if err != nil {
@@ -288,8 +311,51 @@ func (o *Ops) Infra(ctx context.Context, w io.Writer, action, stack string, m In
 	if m.Admin {
 		label += " (admin)"
 	}
+	if m.PlanRun != "" {
+		label += " of plan " + m.PlanRun
+	}
+	if planOnly {
+		fmt.Fprintln(w, "apply without --plan only plans; review the plan, then apply it by id")
+	}
 	fmt.Fprintf(w, "%s %s at %s/%s@%s\n", label, stack, o.B.Owner, platformRepo, ref[:12])
-	return o.Dispatch(ctx, w, "infra.yml", in, opt)
+	if !planOnly || opt.NoWait {
+		return o.Dispatch(ctx, w, "infra.yml", in, opt)
+	}
+	var buf bytes.Buffer
+	if err := o.Dispatch(ctx, io.MultiWriter(w, &buf), "infra.yml", in, opt); err != nil {
+		return err
+	}
+	res := ParseOPS(buf.String())
+	if res["result"] == "noop" {
+		fmt.Fprintln(w, "Nothing to apply.")
+		return nil
+	}
+	id := res["plan_run"]
+	if id == "" {
+		return fmt.Errorf("%w: the plan run printed no plan id", ErrNotApplied)
+	}
+	next := fmt.Sprintf("ops apply %s --plan %s", stack, id)
+	if m.Admin {
+		next += " --admin --confirm-destroy " + res["destroys"]
+	}
+	fmt.Fprintf(w, "Not applied. To apply exactly this plan (within 1h, before platform or platform-control main changes):\n  %s\n", next)
+	return fmt.Errorf("%w: re-run with --plan %s", ErrNotApplied, id)
+}
+
+// ParseOPS returns the value of each "OPS: key=value" line in out (the last
+// one wins for repeated keys).
+func ParseOPS(out string) map[string]string {
+	res := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "OPS: ")
+		if !ok {
+			continue
+		}
+		if k, v, ok := strings.Cut(rest, "="); ok {
+			res[k] = v
+		}
+	}
+	return res
 }
 
 // Deploy dispatches deploy.yml. action is "deploy" or "rollback"; an empty

@@ -39,7 +39,8 @@ var (
 	appProp     = map[string]any{"type": "string", "enum": []string{"abfahrt", "imoutfyi"}}
 	noWaitProp  = boolean("return right after dispatch (the run URL is still returned); reattach with ops_run")
 	adminProp   = boolean("admin mode: allows deletes, replaces, IAM and any resource type; logged to the Agent activity issue")
-	confirmProp = integer("admin only: number of resources the plan destroys (must match, else the run fails)")
+	confirmProp = integer("admin only: number of resources the plan destroys or replaces (must match, else the run fails)")
+	planProp    = str("run id of the plan to apply (OPS: plan_run= from ops_plan); without it apply only plans")
 )
 
 func infraMode(a map[string]any) InfraMode {
@@ -48,6 +49,7 @@ func infraMode(a map[string]any) InfraMode {
 	if n, ok := a["confirm_destroy"].(float64); ok {
 		m.ConfirmDestroy = int(n)
 	}
+	m.PlanRun = arg(a, "plan")
 	return m
 }
 
@@ -71,15 +73,15 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 			}),
 		},
 		{
-			Name: "ops_plan", Description: "Terraform plan for a stack at platform main HEAD (runs in platform-control). Returns OPS: changes=add,change,destroy.",
+			Name: "ops_plan", Description: "Terraform plan for a stack at platform main HEAD (runs in platform-control). Returns OPS: changes=add,change,destroy, OPS: destroy=/replace=<address> for each resource lost, and OPS: plan_run=<id> to pass to ops_apply.",
 			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name, e.g. abfahrt"), "admin": adminProp, "confirm_destroy": confirmProp, "no_wait": noWaitProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
 				return o.Infra(ctx, sb, "plan", arg(a, "stack"), infraMode(a), wait(a))
 			}),
 		},
 		{
-			Name: "ops_apply", Description: "Terraform plan+apply for a stack at platform main HEAD. Mutates infrastructure; run ops_plan first. Before destroying anything, say what will be lost.",
-			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name"), "admin": adminProp, "confirm_destroy": confirmProp, "no_wait": noWaitProp}),
+			Name: "ops_apply", Description: "Apply exactly the plan from an earlier ops_plan run (plan = its plan_run id; same admin mode). Refused if the plan is older than 1h or platform, platform-control or the state changed since; then re-plan. Without plan it only plans. Mutates infrastructure; before destroying anything, say what will be lost.",
+			InputSchema: schema([]string{"stack"}, map[string]map[string]any{"stack": str("stack name"), "plan": planProp, "admin": adminProp, "confirm_destroy": confirmProp, "no_wait": noWaitProp}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
 				return o.Infra(ctx, sb, "apply", arg(a, "stack"), infraMode(a), wait(a))
 			}),
