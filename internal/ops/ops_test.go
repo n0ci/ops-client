@@ -379,6 +379,8 @@ func TestInvalidInputsNeverDispatch(t *testing.T) {
 		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{Admin: true, ConfirmDestroy: -1}, WaitOpts{}),
 		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{PlanRun: "12a"}, WaitOpts{}),
 		o.Infra(ctx, w, "plan", "abfahrt", InfraMode{PlanRun: "123"}, WaitOpts{}),
+		o.Infra(ctx, w, "plan", "abfahrt", InfraMode{AllowCost: true}, WaitOpts{}),
+		o.Infra(ctx, w, "apply", "abfahrt", InfraMode{Admin: true, AllowCost: true, PlanRun: "123"}, WaitOpts{}),
 		o.Host(ctx, w, "abfahrt", "exec", "", "", WaitOpts{}),
 		o.HostExec(ctx, w, "abfahrt", []byte(" \n"), WaitOpts{}),
 		o.HostExec(ctx, w, "nope", []byte("id"), WaitOpts{}),
@@ -516,11 +518,24 @@ func TestGHArgsAndEnv(t *testing.T) {
 }
 
 func TestMCPInfraMode(t *testing.T) {
-	m := infraMode(map[string]any{"admin": true, "confirm_destroy": float64(3), "plan": "77"})
-	if !m.Admin || m.ConfirmDestroy != 3 || m.PlanRun != "77" {
+	m := infraMode(map[string]any{"admin": true, "confirm_destroy": float64(3), "plan": "77", "allow_cost": true})
+	if !m.Admin || m.ConfirmDestroy != 3 || m.PlanRun != "77" || !m.AllowCost {
 		t.Errorf("infraMode = %+v", m)
 	}
 	if m := infraMode(map[string]any{}); m.Admin || m.ConfirmDestroy != 0 {
 		t.Errorf("default infraMode = %+v", m)
+	}
+}
+
+func TestAllowCostInputs(t *testing.T) {
+	f := newFake(t, "success")
+	o := testOps(t)
+	if err := o.Infra(context.Background(), &bytes.Buffer{}, "plan", "abfahrt", InfraMode{Admin: true, AllowCost: true}, WaitOpts{NoWait: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inputs["allow_cost"] != "true" || f.inputs["mode"] != "admin" || f.inputs["action"] != "plan" {
+		t.Errorf("inputs = %v", f.inputs)
 	}
 }

@@ -22,7 +22,7 @@ ops login | doctor | clone [--dir DIR] | status | version
 ops setup-agents [--dry-run]
 ops token [source|dispatch]          ops gh [--] <args...>
 ops git-credential <get|store|erase> (configured by `ops login`)
-ops plan <stack> [--admin]           ops apply <stack> --plan ID [--admin --confirm-destroy N]
+ops plan <stack> [--admin [--allow-cost]]   ops apply <stack> --plan ID [--admin --confirm-destroy N]
 ops deploy <app> [revision]          ops rollback <app>
 ops logs <app> [service] [--since 30m]
 ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
@@ -39,13 +39,14 @@ command to apply that plan and exits non-zero. Standard mode keeps the stack's
 guardrails (no deletes, replaces or IAM, sizes within the envelope). `--admin` runs
 in platform-control's `ops-admin` environment, which allows all of that; plan and
 apply must use the same mode, and `--confirm-destroy` must equal the plan's destroy
-count or the apply is refused.
+count or the apply is refused. Admin plans also stay within the stack's free storage
+budget unless planned with `--admin --allow-cost` (that costs money).
 Admin runs and `host exec` post an entry to the "Agent activity" issue in
 platform-control, so the owner sees every one. `ops gh` uses the source app, which is
 installed on all repositories (platform-control included) with code, workflow,
 secret, variable, environment and settings access.
 
-MCP tools: `ops_status`, `ops_plan` (`admin`), `ops_apply` (`plan`, `admin`, `confirm_destroy`),
+MCP tools: `ops_status`, `ops_plan` (`admin`, `allow_cost`), `ops_apply` (`plan`, `admin`, `allow_cost`, `confirm_destroy`),
 `ops_deploy`, `ops_rollback`, `ops_logs`, `ops_host` (`command: exec` + `script`),
 `ops_gh` (`args`), `ops_run`.
 

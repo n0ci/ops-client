@@ -251,6 +251,7 @@ type InfraMode struct {
 	Admin          bool
 	ConfirmDestroy int
 	PlanRun        string
+	AllowCost      bool // admin plan may exceed the stack's free storage budget
 }
 
 func (m InfraMode) inputs() (map[string]string, error) {
@@ -258,6 +259,15 @@ func (m InfraMode) inputs() (map[string]string, error) {
 		return nil, fmt.Errorf("invalid --confirm-destroy %d", m.ConfirmDestroy)
 	}
 	in := map[string]string{}
+	if m.AllowCost {
+		if !m.Admin {
+			return nil, errors.New("--allow-cost needs --admin")
+		}
+		if m.PlanRun != "" {
+			return nil, errors.New("--allow-cost applies to the plan, not to ops apply --plan")
+		}
+		in["allow_cost"] = "true"
+	}
 	if m.PlanRun != "" {
 		if err := ValidPlanRun(m.PlanRun); err != nil {
 			return nil, err
@@ -310,6 +320,9 @@ func (o *Ops) Infra(ctx context.Context, w io.Writer, action, stack string, m In
 	label := action
 	if m.Admin {
 		label += " (admin)"
+	}
+	if m.AllowCost {
+		label += " (allow cost)"
 	}
 	if m.PlanRun != "" {
 		label += " of plan " + m.PlanRun

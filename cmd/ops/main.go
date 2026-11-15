@@ -33,14 +33,17 @@ Setup:
   ops setup-agents [--dry-run]   register "ops mcp" with Claude Code, Codex, OpenCode
 
 Executor (platform-control workflows; prints "Run: <url>" first):
-  ops plan <stack> [--admin]     terraform plan at platform main HEAD; prints the plan
+  ops plan <stack> [--admin [--allow-cost]]
+                                 terraform plan at platform main HEAD; prints the plan
                                  id (OPS: plan_run=) and every address it destroys or
                                  replaces
   ops apply <stack> --plan ID [--admin --confirm-destroy N]
                                  apply exactly that plan (refused if older than 1h or
                                  if platform/platform-control main or the state moved);
                                  --admin allows deletes, replaces and IAM; N must equal
-                                 the plan's destroy count. Without --plan: only plans
+                                 the plan's destroy count. Without --plan: only plans.
+                                 --allow-cost (admin plans): may exceed the stack's
+                                 free storage budget, which costs money
   ops deploy <app> [revision]    deploy (empty revision = latest successful build)
   ops rollback <app>
   ops logs <app> [service] [--since 30m]
@@ -150,6 +153,7 @@ func run(ctx context.Context, args []string) error {
 	dir := fs.String("dir", "", "clone target directory (default: bundle workdir)")
 	admin := fs.Bool("admin", false, "plan/apply: admin mode (deletes, IAM, any resource type)")
 	confirm := fs.Int("confirm-destroy", 0, "plan/apply --admin: number of resources the plan may destroy")
+	allowCost := fs.Bool("allow-cost", false, "plan --admin: allow exceeding the stack's free storage budget (costs money)")
 	planRun := fs.String("plan", "", "apply: run id of the plan to apply (printed by ops plan)")
 	pos, err := parse(fs, args)
 	if errors.Is(err, flag.ErrHelp) {
@@ -161,6 +165,9 @@ func run(ctx context.Context, args []string) error {
 	opt := ops.WaitOpts{NoWait: *noWait, Timeout: *timeout}
 	if (*admin || *confirm != 0) && cmd != "plan" && cmd != "apply" {
 		return errors.New("--admin and --confirm-destroy apply only to plan/apply")
+	}
+	if *allowCost && cmd != "plan" && cmd != "apply" {
+		return errors.New("--allow-cost applies only to plan/apply")
 	}
 	if *planRun != "" && cmd != "apply" {
 		return errors.New("--plan applies only to apply")
@@ -202,7 +209,7 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprintln(out, t.Value)
 		return nil
 	case "plan", "apply":
-		return o.Infra(ctx, out, cmd, at(0), ops.InfraMode{Admin: *admin, ConfirmDestroy: *confirm, PlanRun: *planRun}, opt)
+		return o.Infra(ctx, out, cmd, at(0), ops.InfraMode{Admin: *admin, ConfirmDestroy: *confirm, PlanRun: *planRun, AllowCost: *allowCost}, opt)
 	case "deploy":
 		return o.Deploy(ctx, out, "deploy", at(0), at(1), opt)
 	case "rollback":
@@ -234,7 +241,7 @@ var arity = map[string]struct {
 }{
 	"clone":    {0, 0, "clone [--dir DIR]"},
 	"token":    {0, 1, "token [source|dispatch]"},
-	"plan":     {1, 1, "plan <stack> [--admin [--confirm-destroy N]] [--no-wait] [--timeout 45m]"},
+	"plan":     {1, 1, "plan <stack> [--admin [--allow-cost] [--confirm-destroy N]] [--no-wait] [--timeout 45m]"},
 	"apply":    {1, 1, "apply <stack> --plan ID [--admin --confirm-destroy N] [--no-wait] [--timeout 45m]"},
 	"deploy":   {1, 2, "deploy <app> [revision]"},
 	"rollback": {1, 1, "rollback <app>"},
