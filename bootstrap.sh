@@ -4,7 +4,7 @@
 # Copy the "ops bootstrap" note from iCloud Passwords to the clipboard first (macOS).
 set -eu
 
-OPS_VERSION="${OPS_VERSION:-0.1.0}" # pinned release; bump deliberately
+OPS_VERSION="${OPS_VERSION:-0.1.1}" # pinned release; bump deliberately
 BASE="https://github.com/n0ci/ops-client/releases/download/v${OPS_VERSION}"
 BIN_DIR="${HOME}/.local/bin"
 
@@ -68,18 +68,25 @@ say "Installed ${BIN_DIR}/ops ($("${BIN_DIR}/ops" version))"
 case ":${PATH}:" in
   *":${BIN_DIR}:"*) ;;
   *)
-    say "warning: ${BIN_DIR} is not on PATH. Add to your shell profile:"
-    say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    # Agents run commands through login shells; put ops on their PATH too.
+    for profile in "$HOME/.zprofile" "$HOME/.bash_profile"; do
+      if ! grep -qs 'ops-client: PATH' "$profile"; then
+        # shellcheck disable=SC2016 # $HOME must stay literal in the profile
+        printf '\n# ops-client: PATH\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$profile"
+        say "Added ${BIN_DIR} to PATH in ${profile} (open a new shell to pick it up)"
+      fi
+    done
     PATH="${BIN_DIR}:${PATH}"
     export PATH
     ;;
 esac
 
-# stdin may be this script (curl | sh); give login the terminal instead.
+# stdin may be this script (curl | sh): give login the terminal, or an empty
+# stdin so it reads the bundle from the clipboard.
 if (: </dev/tty) 2>/dev/null; then
   ops login </dev/tty
 else
-  ops login
+  ops login </dev/null
 fi
 ops clone
 ops doctor

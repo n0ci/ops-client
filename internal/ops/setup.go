@@ -73,19 +73,28 @@ func Login(ctx context.Context, stdin *os.File, w io.Writer) error {
 func readBundleInput(stdin *os.File) (string, bool, error) {
 	fi, err := stdin.Stat()
 	tty := err == nil && fi.Mode()&os.ModeCharDevice != 0
-	if tty && runtime.GOOS == "darwin" {
+	if !tty {
+		// Piped input wins when it holds a bundle; otherwise (empty stdin, or a
+		// script's remainder under `curl | sh`) fall back to the clipboard.
+		b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+		if err != nil {
+			return "", false, err
+		}
+		if strings.HasPrefix(strings.TrimSpace(string(b)), bundle.Prefix) || runtime.GOOS != "darwin" {
+			return string(b), false, nil
+		}
+	}
+	if runtime.GOOS == "darwin" {
 		out, err := exec.Command("pbpaste").Output()
 		if err != nil {
 			return "", false, fmt.Errorf("pbpaste: %w", err)
 		}
 		if !strings.HasPrefix(strings.TrimSpace(string(out)), bundle.Prefix) {
-			return "", false, errors.New("clipboard does not hold an ops bundle: copy the \"ops bootstrap\" note from iCloud Passwords and re-run `ops login`")
+			return "", false, errors.New("clipboard does not hold an ops bundle: copy \"ops bootstrap bundle\" from Passwords (ops.nocera.dev) and re-run `ops login`")
 		}
 		return string(out), true, nil
 	}
-	if tty {
-		fmt.Fprintln(os.Stderr, "Paste the ops1: bundle, then press Enter and Ctrl-D:")
-	}
+	fmt.Fprintln(os.Stderr, "Paste the ops1: bundle, then press Enter and Ctrl-D:")
 	b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	return string(b), false, err
 }
