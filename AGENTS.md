@@ -26,7 +26,8 @@ through `ops`, which authenticates as GitHub Apps. Run it from the shell.
 
 | Goal | Command |
 |---|---|
-| Get the repos | `ops clone` (into `~/repo`; skips existing ones) |
+| Get the repos | `ops clone` (into the workdir `~/repo/ops`, or `$OPS_WORKDIR`; skips existing ones) |
+| Several agents on one repo | each in its own `git worktree add ../<repo>-<task> -b <branch>`; never switch branches in a shared checkout |
 | git clone/fetch/push | plain `git` over https; `ops` is the credential helper |
 | PRs, issues, workflows, secrets, settings (any repo, platform-control too) | `ops gh -- pr create ...`, `ops gh -- secret set NAME -R n0ci/<repo>` |
 | Token for a script | `GH_TOKEN=$(ops token) some-tool` (keep it in the environment, never on disk) |
@@ -55,8 +56,10 @@ Apps: `abfahrt`, `imoutfyi`. Stacks: see `stacks:` in `n0ci/platform/inventory.y
 
 `ops mcp` serves the same operations as MCP tools (`ops_status`, `ops_plan`,
 `ops_apply`, `ops_deploy`, `ops_rollback`, `ops_logs`, `ops_host`, `ops_gh`, `ops_run`) over
-stdio. `ops setup-agents` registers it with Claude Code, Codex and OpenCode (the
-bootstrap runs it; re-running is safe, `--dry-run` previews). If the `ops_*` tools
+stdio. `ops setup-agents` registers it with Claude Code (project scope: `.mcp.json`
+in the workdir `~/repo/ops`, so only sessions started there or in a repository
+below it get the tools; approve it when Claude Code asks), Codex and OpenCode
+(user-wide) (the bootstrap runs it; re-running is safe, `--dry-run` previews). If the `ops_*` tools
 are missing in your session, check the `MCP registered:` line of `ops doctor`, run
 `ops setup-agents`, and tell the user to restart the agent; until then use the CLI.
 The same rules apply to the tools as to the commands.

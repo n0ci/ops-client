@@ -226,12 +226,15 @@ func (o *Ops) Clone(ctx context.Context, w io.Writer, dir string) error {
 	return nil
 }
 
-// workspaceGuide is written once to the workdir root so agents started there
-// (outside any repository) learn how to operate the systems.
+// workspaceGuide is written once to the workdir root (AGENTS.md, CLAUDE.md)
+// so agents started there or in a repository below it learn how to operate
+// the systems. It is not written anywhere else.
 const workspaceGuide = `# Workspace
 
 Repositories of this machine's ops setup live in this directory (see
-platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
+platform/inventory.yaml); Claude Code gets the ops MCP server from .mcp.json
+here. Other projects stay outside this folder. For anything beyond editing
+code, use the ops CLI:
 
 - Deploy: ops deploy <app> [revision]; roll back: ops rollback <app>
 - Infrastructure: edit platform/stacks/<stack>/inputs.tfvars.json, push, then
@@ -241,6 +244,9 @@ platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
   root shell work: ops host <app> exec <script>
 - GitHub (any repo, secrets, settings): ops gh -- <args>
 - When something fails: ops doctor
+- Parallel work: when several agents work on the same repository, each works
+  in its own git worktree (git worktree add ../<repo>-<task> -b <branch>),
+  never switching branches in a shared checkout.
 
 Agents have full standing authority to operate these systems. Before anything
 destructive or irreversible: say what will be lost, pass --confirm-destroy N
@@ -361,12 +367,9 @@ func Doctor(ctx context.Context, w io.Writer) bool {
 		p, err := exec.LookPath(t.bin)
 		add(t.bin+" on PATH", t.optional, t.hint, p, err)
 	}
-	wd := "~/repo"
-	if b != nil {
-		wd = b.Workdir
-	}
+	wd := bundle.Workdir(b)
 	_, err = os.Stat(bundle.ExpandHome(wd))
-	add("workdir "+wd+" exists", false, "run `ops clone`", "", err)
+	add("workdir "+wd+" exists", false, "run `ops clone` (or set $"+bundle.WorkdirEnv+" to where the repositories are)", workdirSource(b), err)
 
 	// Informational: ✓ registered, – harness not installed, ✗ missing or stale.
 	e, detail = nil, ""
@@ -404,6 +407,17 @@ func Doctor(ctx context.Context, w io.Writer) bool {
 		}
 	}
 	return ok
+}
+
+// workdirSource says where the workdir setting came from.
+func workdirSource(b *bundle.Bundle) string {
+	switch {
+	case strings.TrimSpace(os.Getenv(bundle.WorkdirEnv)) != "":
+		return "from $" + bundle.WorkdirEnv
+	case b != nil && bundle.ConfiguredWorkdir(b.Workdir) != "":
+		return "from the bundle"
+	}
+	return ""
 }
 
 func ownerOr(b *bundle.Bundle) string {

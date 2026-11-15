@@ -3,6 +3,7 @@ package ops
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -242,13 +243,13 @@ func TestOpencodeJSONCLeftAlone(t *testing.T) {
 
 type fakeAgentMachine struct {
 	onPath map[string]bool
-	calls  []string
-	getOut string // `claude mcp get ops` output; empty = not registered
+	calls  []string // "<dir base>: claude mcp ..."
+	getOut string   // `claude mcp get ops` output in $HOME; empty = not registered
 }
 
 func (f *fakeAgentMachine) env(home string) *AgentEnv {
 	return &AgentEnv{
-		Home: home, Exe: testExe,
+		Home: home, Workdir: filepath.Join(home, "repo", "ops"), Exe: testExe,
 		Getenv: func(string) string { return "" },
 		LookPath: func(name string) (string, error) {
 			if f.onPath[name] {
@@ -256,36 +257,47 @@ func (f *fakeAgentMachine) env(home string) *AgentEnv {
 			}
 			return "", errors.New("not found")
 		},
-		Run: func(_ context.Context, name string, args ...string) (string, error) {
+		Run: func(_ context.Context, dir, name string, args ...string) (string, error) {
 			c := strings.Join(append([]string{filepath.Base(name)}, args...), " ")
-			f.calls = append(f.calls, c)
-			if c == "claude mcp get ops" && f.getOut == "" {
+			f.calls = append(f.calls, filepath.Base(dir)+": "+c)
+			switch {
+			case c == "claude mcp get ops" && f.getOut == "":
 				return `No MCP server named "ops".`, errors.New("exit status 1")
-			}
-			if c == "claude mcp get ops" {
+			case c == "claude mcp get ops":
 				return f.getOut, nil
+			case c == "claude mcp remove --scope user ops":
+				f.getOut = ""
+			case c == "claude mcp remove --scope project ops":
+				return "ok", os.Remove(filepath.Join(dir, ".mcp.json"))
+			case strings.HasPrefix(c, "claude mcp add --scope project ops -- "):
+				js, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"ops": map[string]any{"type": "stdio", "command": args[6], "args": args[7:]}}})
+				return "ok", os.WriteFile(filepath.Join(dir, ".mcp.json"), js, 0o644)
 			}
 			return "ok", nil
 		},
 	}
 }
 
+const userOps = "ops:\n  Scope: User config (available in all your projects)\n  Type: stdio\n  Command: /old/ops\n  Args: mcp\n"
+
 func TestSetupAgents(t *testing.T) {
 	home := t.TempDir()
-	f := &fakeAgentMachine{onPath: map[string]bool{"claude": true, "codex": true}}
+	f := &fakeAgentMachine{onPath: map[string]bool{"claude": true, "codex": true}, getOut: userOps}
 	e := f.env(home)
 	ctx := context.Background()
 	codexCfg := filepath.Join(home, ".codex", "config.toml")
+	mcpJSON := filepath.Join(e.Workdir, ".mcp.json")
+	home0 := filepath.Base(home)
 
 	var out bytes.Buffer
 	if err := SetupAgents(ctx, &out, e, true); err != nil {
 		t.Fatal(err)
 	}
-	if fileExists(codexCfg) || len(f.calls) != 1 {
+	if fileExists(codexCfg) || isDir(e.Workdir) || len(f.calls) != 1 {
 		t.Fatalf("dry run changed something: calls=%q", f.calls)
 	}
 	for _, s := range []string{
-		"✓ claude: would run: claude mcp add --scope user ops -- /opt/ops bin/ops mcp",
+		"✓ claude: would run: (cd " + home + " && claude mcp remove --scope user ops) && (cd " + e.Workdir + " && claude mcp add --scope project ops -- /opt/ops bin/ops mcp)",
 		"✓ codex: would create " + codexCfg,
 		"    [mcp_servers.ops]",
 		"– opencode: not installed",
@@ -294,36 +306,47 @@ func TestSetupAgents(t *testing.T) {
 			t.Errorf("dry run output lacks %q:\n%s", s, out.String())
 		}
 	}
+	if s, ok := agentStatus(ctx, e); ok || s != "claude ✗ codex ✗ opencode –" {
+		t.Fatalf("status = %q, %v", s, ok)
+	}
 
+	// Real run: the old user entry goes, the project entry is added in the workdir.
 	f.calls = nil
 	out.Reset()
 	if err := SetupAgents(ctx, &out, e, false); err != nil {
 		t.Fatal(err)
 	}
-	if !equal(f.calls, []string{"claude mcp get ops", "claude mcp add --scope user ops -- /opt/ops bin/ops mcp"}) {
+	if !equal(f.calls, []string{
+		home0 + ": claude mcp get ops",
+		home0 + ": claude mcp remove --scope user ops",
+		"ops: claude mcp add --scope project ops -- /opt/ops bin/ops mcp",
+	}) {
 		t.Fatalf("calls = %q", f.calls)
+	}
+	if !strings.Contains(out.String(), "✓ claude: registered (project scope, "+mcpJSON+")") || !strings.Contains(out.String(), "removed the user-scope entry") {
+		t.Errorf("output:\n%s", out.String())
 	}
 	if b, _ := os.ReadFile(codexCfg); !strings.Contains(string(b), "[mcp_servers.ops]") {
 		t.Fatalf("codex config = %q", b)
 	}
 
 	// Second run: everything already registered, nothing runs or changes.
-	f.getOut = "ops:\n  Scope: User config (available in all your projects)\n  Type: stdio\n  Command: /opt/ops bin/ops\n  Args: mcp\n"
 	f.calls = nil
 	out.Reset()
 	if err := SetupAgents(ctx, &out, e, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 1 || !strings.Contains(out.String(), "✓ claude: already registered") || !strings.Contains(out.String(), "✓ codex: already registered") {
+	if len(f.calls) != 1 || !strings.Contains(out.String(), "✓ claude: already registered (project scope") || !strings.Contains(out.String(), "✓ codex: already registered") {
 		t.Fatalf("calls=%q out=\n%s", f.calls, out.String())
 	}
 	if s, ok := agentStatus(ctx, e); !ok || s != "claude ✓ codex ✓ opencode –" {
 		t.Fatalf("status = %q, %v", s, ok)
 	}
 
-	// Stale user entry is removed and re-added.
-	f.getOut = strings.Replace(f.getOut, "/opt/ops bin/ops", "/old/ops", 1)
-	f.calls = nil
+	// A project entry for another binary is replaced; other servers are not touched.
+	if err := os.WriteFile(mcpJSON, []byte(`{"mcpServers":{"ops":{"command":"/old/ops","args":["mcp"]},"other":{"command":"x"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if s, ok := agentStatus(ctx, e); ok || s != "claude ✗ codex ✓ opencode –" {
 		t.Fatalf("status = %q, %v", s, ok)
 	}
@@ -331,8 +354,39 @@ func TestSetupAgents(t *testing.T) {
 	if err := SetupAgents(ctx, &bytes.Buffer{}, e, false); err != nil {
 		t.Fatal(err)
 	}
-	if !equal(f.calls, []string{"claude mcp get ops", "claude mcp remove --scope user ops", "claude mcp add --scope user ops -- /opt/ops bin/ops mcp"}) {
+	if !equal(f.calls, []string{home0 + ": claude mcp get ops", "ops: claude mcp remove --scope project ops", "ops: claude mcp add --scope project ops -- /opt/ops bin/ops mcp"}) {
 		t.Fatalf("calls = %q", f.calls)
+	}
+
+	// Only a leftover user entry: removed, project entry kept.
+	f.getOut = userOps
+	f.calls = nil
+	out.Reset()
+	if err := SetupAgents(ctx, &out, e, false); err != nil {
+		t.Fatal(err)
+	}
+	if !equal(f.calls, []string{home0 + ": claude mcp get ops", home0 + ": claude mcp remove --scope user ops"}) || !strings.Contains(out.String(), "already registered (project scope") {
+		t.Fatalf("calls = %q out=\n%s", f.calls, out.String())
+	}
+
+	// A non-user entry seen from $HOME (local scope there) is left alone.
+	f.getOut = strings.Replace(userOps, "User config (available in all your projects)", "Local config (private to you in this project)", 1)
+	f.calls = nil
+	if s, ok := agentStatus(ctx, e); !ok || s != "claude ✓ codex ✓ opencode –" {
+		t.Fatalf("status = %q, %v (calls %q)", s, ok, f.calls)
+	}
+}
+
+func TestClaudeProjectEntryInvalid(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".mcp.json")
+	if e, err := claudeProjectEntry(p); e != nil || err != nil {
+		t.Fatalf("missing file: %v %v", e, err)
+	}
+	if err := os.WriteFile(p, []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claudeProjectEntry(p); err == nil {
+		t.Fatal("no error for invalid JSON")
 	}
 }
 
@@ -371,5 +425,22 @@ func TestParseClaudeGet(t *testing.T) {
 	s, c, a := parseClaudeGet(out)
 	if !strings.HasPrefix(s, "User config") || c != "/usr/bin/true" || a != "mcp" {
 		t.Fatalf("%q %q %q", s, c, a)
+	}
+}
+
+func TestWriteWorkspaceGuide(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(keep, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	writeWorkspaceGuide(&out, dir)
+	b, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil || !strings.Contains(string(b), "own git worktree") || !strings.Contains(string(b), "never switching branches in a shared checkout") {
+		t.Fatalf("AGENTS.md = %q, %v", b, err)
+	}
+	if b, _ := os.ReadFile(keep); string(b) != "mine\n" {
+		t.Fatalf("existing CLAUDE.md overwritten: %q", b)
 	}
 }

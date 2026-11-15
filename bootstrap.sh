@@ -1,11 +1,12 @@
 #!/bin/sh
-# Fresh-machine setup for ops: install the pinned release, log in, clone, check,
-# register the ops MCP server with the coding agents.
+# Fresh-machine setup for ops: install the pinned release, log in, clone into the
+# workdir (~/repo/ops, or $OPS_WORKDIR), check, register the ops MCP server with
+# the coding agents (Claude Code: project scope in the workdir).
 #   curl -fsSL https://raw.githubusercontent.com/n0ci/ops-client/main/bootstrap.sh | sh
 # Copy the "ops bootstrap" note from iCloud Passwords to the clipboard first (macOS).
 set -eu
 
-OPS_VERSION="${OPS_VERSION:-0.3.1}" # pinned release; bump deliberately
+OPS_VERSION="${OPS_VERSION:-0.3.2}" # pinned release; bump deliberately
 BASE="https://github.com/n0ci/ops-client/releases/download/v${OPS_VERSION}"
 BIN_DIR="${HOME}/.local/bin"
 

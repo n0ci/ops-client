@@ -27,10 +27,12 @@ Setup:
   ops login                      store bootstrap bundle (clipboard on macOS, else stdin); configure git
   ops doctor                     check bundle, tokens, access, git helper, tools
   ops clone [--dir DIR]          clone missing inventory repos into the workdir
+                                 (~/repo/ops; override with $OPS_WORKDIR)
   ops token [source|dispatch]    print a fresh installation token
   ops gh [--] <args...>          run gh with GH_TOKEN=<source token> (all repos, incl. secrets/settings)
   ops git-credential <get|store|erase>   git credential helper
-  ops setup-agents [--dry-run]   register "ops mcp" with Claude Code, Codex, OpenCode
+  ops setup-agents [--dry-run]   register "ops mcp" with Claude Code (project scope:
+                                 <workdir>/.mcp.json), Codex, OpenCode (user-wide)
 
 Executor (platform-control workflows; prints "Run: <url>" first):
   ops plan <stack> [--admin [--allow-cost]]
@@ -155,7 +157,7 @@ func run(ctx context.Context, args []string) error {
 	waitPending := fs.Bool("wait", false, "deploy/rollback abfahrt: keep waiting (up to 5 h) while an import defers the release")
 	timeout := fs.Duration("timeout", ops.DefaultTimeout, "overall wait timeout")
 	since := fs.String("since", "30m", "log window for logs/host (e.g. 30m, 2h, 1d)")
-	dir := fs.String("dir", "", "clone target directory (default: bundle workdir)")
+	dir := fs.String("dir", "", "clone target directory (default: the workdir, ~/repo/ops or $OPS_WORKDIR)")
 	admin := fs.Bool("admin", false, "plan/apply: admin mode (deletes, IAM, any resource type)")
 	confirm := fs.Int("confirm-destroy", 0, "plan/apply --admin: number of resources the plan may destroy")
 	allowCost := fs.Bool("allow-cost", false, "plan --admin: allow exceeding the stack's free storage budget (costs money)")

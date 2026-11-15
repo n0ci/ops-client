@@ -3,6 +3,8 @@ package bundle_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,11 +46,41 @@ func TestDecodeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Owner != "n0ci" || got.Workdir != "~/repo" {
-		t.Fatalf("defaults not applied: %q %q", got.Owner, got.Workdir)
+	if got.Owner != "n0ci" {
+		t.Fatalf("defaults not applied: %q", got.Owner)
 	}
-	if strings.HasPrefix(got.WorkdirPath(), "~") {
-		t.Fatalf("workdir not expanded: %s", got.WorkdirPath())
+	t.Setenv(bundle.WorkdirEnv, "")
+	home, _ := os.UserHomeDir()
+	if got.WorkdirPath() != filepath.Join(home, "repo", "ops") {
+		t.Fatalf("default workdir = %s", got.WorkdirPath())
+	}
+}
+
+func TestResolveWorkdir(t *testing.T) {
+	for _, c := range []struct{ env, configured, want string }{
+		{"", "", "~/repo/ops"},
+		{"", "~/src", "~/src"},
+		{"/w", "~/src", "/w"},
+		{" ", " ", "~/repo/ops"},
+		{"", "~/repo", "~/repo/ops"}, // pre-0.3.2 default carried by existing bundles
+		{"", "~/repo/", "~/repo/ops"},
+		{"~/repo", "", "~/repo"}, // explicit env still wins
+		{"", "~/repo/ops2", "~/repo/ops2"},
+	} {
+		if got := bundle.ResolveWorkdir(c.env, c.configured); got != c.want {
+			t.Errorf("ResolveWorkdir(%q, %q) = %q, want %q", c.env, c.configured, got, c.want)
+		}
+	}
+	t.Setenv(bundle.WorkdirEnv, "/tmp/ops-wd")
+	if got := bundle.Workdir(nil); got != "/tmp/ops-wd" {
+		t.Errorf("Workdir(nil) with env = %q", got)
+	}
+	if got := (&bundle.Bundle{Workdir: "~/x"}).WorkdirPath(); got != "/tmp/ops-wd" {
+		t.Errorf("env does not override the bundle: %q", got)
+	}
+	t.Setenv(bundle.WorkdirEnv, "")
+	if got := bundle.Workdir(&bundle.Bundle{Workdir: "~/x"}); got != "~/x" {
+		t.Errorf("bundle workdir ignored: %q", got)
 	}
 }
 

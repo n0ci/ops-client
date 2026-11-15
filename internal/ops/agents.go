@@ -14,18 +14,22 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/n0ci/ops-client/internal/bundle"
 )
 
 // AgentEnv is what setup-agents needs from the machine; tests replace it.
 type AgentEnv struct {
-	Home     string                                                                 // user home ($HOME)
-	Exe      string                                                                 // absolute path of the ops binary to register
-	Getenv   func(string) string                                                    // CODEX_HOME, XDG_CONFIG_HOME
-	LookPath func(string) (string, error)                                           // finds claude/codex/opencode
-	Run      func(ctx context.Context, name string, args ...string) (string, error) // combined output
+	Home     string                                                                      // user home ($HOME)
+	Workdir  string                                                                      // ops workdir (expanded); Claude Code's project scope
+	Exe      string                                                                      // absolute path of the ops binary to register
+	Getenv   func(string) string                                                         // CODEX_HOME, XDG_CONFIG_HOME
+	LookPath func(string) (string, error)                                                // finds claude/codex/opencode
+	Run      func(ctx context.Context, dir, name string, args ...string) (string, error) // combined output; dir "" = inherit
 }
 
-// DefaultAgentEnv describes the real machine. Home honors $HOME.
+// DefaultAgentEnv describes the real machine. Home honors $HOME; the workdir
+// is resolved like `ops clone` does (OPS_WORKDIR, the bundle, ~/repo/ops).
 func DefaultAgentEnv() (*AgentEnv, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -38,10 +42,13 @@ func DefaultAgentEnv() (*AgentEnv, error) {
 	if err != nil {
 		return nil, fmt.Errorf("locating the ops binary: %w", err)
 	}
+	b, _ := LoadBundle() // optional: only its workdir setting is used
 	return &AgentEnv{
-		Home: home, Exe: exe, Getenv: os.Getenv, LookPath: exec.LookPath,
-		Run: func(ctx context.Context, name string, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+		Home: home, Workdir: bundle.ExpandHome(bundle.Workdir(b)), Exe: exe, Getenv: os.Getenv, LookPath: exec.LookPath,
+		Run: func(ctx context.Context, dir, name string, args ...string) (string, error) {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
 	}, nil
@@ -136,42 +143,101 @@ func agentStatus(ctx context.Context, e *AgentEnv) (string, bool) {
 
 // --- Claude Code ---------------------------------------------------------
 
+// claude registers ops in Claude Code's project scope: .mcp.json in the
+// workdir, which Claude Code also reads in every repository below it, so
+// sessions elsewhere do not get the ops tools. A user-scope `ops` entry (what
+// ops before 0.3.2 registered) is removed; other servers are left alone.
 func (e *AgentEnv) claude(ctx context.Context, dry bool) agentResult {
 	bin, err := e.LookPath("claude")
 	if err != nil {
 		return agentResult{state: agentNotInstalled, detail: "not installed (no `claude` on PATH)"}
 	}
+	if e.Workdir == "" {
+		return agentResult{state: agentFailed, detail: "no workdir to register the project-scope server in"}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	add := []string{"mcp", "add", "--scope", "user", "ops", "--", e.Exe, "mcp"}
-	var steps [][]string
-	note := ""
-	if out, err := e.Run(ctx, bin, "mcp", "get", "ops"); err == nil {
-		scope, command, args := parseClaudeGet(out)
-		user := strings.HasPrefix(strings.ToLower(scope), "user")
-		if user && command == e.Exe && args == "mcp" {
-			return agentResult{detail: "already registered (user scope): " + e.Exe + " mcp"}
-		}
-		if user {
-			steps = append(steps, []string{"mcp", "remove", "--scope", "user", "ops"})
-		} else if scope != "" {
-			note = fmt.Sprintf(" (note: an `ops` entry in scope %q takes precedence here)", scope)
+	mcpJSON := filepath.Join(e.Workdir, ".mcp.json")
+	type step struct{ dir, what string }
+	var steps []step
+	var undo []string
+
+	// `claude mcp get` from $HOME sees the user scope (and Home's own scopes,
+	// which then shadow it; those are left alone).
+	if out, err := e.Run(ctx, e.Home, bin, "mcp", "get", "ops"); err == nil {
+		if scope, _, _ := parseClaudeGet(out); strings.HasPrefix(strings.ToLower(scope), "user") {
+			steps = append(steps, step{e.Home, "mcp remove --scope user ops"})
+			undo = append(undo, "removed the user-scope entry")
 		}
 	}
-	steps = append(steps, add)
+	have, err := claudeProjectEntry(mcpJSON)
+	if err != nil {
+		return agentResult{state: agentFailed, detail: err.Error()}
+	}
+	current := have != nil && have.Command == e.Exe && len(have.Args) == 1 && have.Args[0] == "mcp"
+	if have != nil && !current {
+		steps = append(steps, step{e.Workdir, "mcp remove --scope project ops"})
+	}
+	if !current {
+		steps = append(steps, step{e.Workdir, ""}) // add, built below (Exe may contain spaces)
+	}
+	where := "project scope, " + mcpJSON
+	if len(steps) == 0 {
+		return agentResult{detail: "already registered (" + where + "): " + e.Exe + " mcp"}
+	}
+	argv := func(s step) []string {
+		if s.what == "" {
+			return []string{"mcp", "add", "--scope", "project", "ops", "--", e.Exe, "mcp"}
+		}
+		return strings.Fields(s.what)
+	}
 	if dry {
 		var cmds []string
 		for _, s := range steps {
-			cmds = append(cmds, "claude "+strings.Join(s, " "))
+			cmds = append(cmds, "(cd "+s.dir+" && claude "+strings.Join(argv(s), " ")+")")
 		}
-		return agentResult{changed: true, detail: "would run: " + strings.Join(cmds, " && ") + note}
+		return agentResult{changed: true, detail: "would run: " + strings.Join(cmds, " && ")}
+	}
+	if err := os.MkdirAll(e.Workdir, 0o755); err != nil {
+		return agentResult{state: agentFailed, detail: err.Error()}
 	}
 	for _, s := range steps {
-		if out, err := e.Run(ctx, bin, s...); err != nil {
-			return agentResult{state: agentFailed, detail: fmt.Sprintf("claude %s: %v: %s", strings.Join(s, " "), err, strings.TrimSpace(out))}
+		if out, err := e.Run(ctx, s.dir, bin, argv(s)...); err != nil {
+			return agentResult{state: agentFailed, detail: fmt.Sprintf("claude %s (in %s): %v: %s", strings.Join(argv(s), " "), s.dir, err, strings.TrimSpace(out))}
 		}
 	}
-	return agentResult{changed: true, detail: "registered (user scope): " + e.Exe + " mcp" + note}
+	detail := "registered (" + where + "): " + e.Exe + " mcp"
+	if current {
+		detail = "already registered (" + where + ")"
+	}
+	if len(undo) > 0 {
+		detail += "; " + strings.Join(undo, ", ")
+	}
+	if !current {
+		detail += "; Claude Code asks once per project to approve it"
+	}
+	return agentResult{changed: true, detail: detail}
+}
+
+type claudeServer struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+// claudeProjectEntry reads mcpServers.ops from a project .mcp.json (nil if
+// the file or the entry is missing).
+func claudeProjectEntry(path string) (*claudeServer, error) {
+	src, err := readOptional(path)
+	if err != nil || len(bytes.TrimSpace(src)) == 0 {
+		return nil, err
+	}
+	var f struct {
+		MCPServers map[string]*claudeServer `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(src, &f); err != nil {
+		return nil, fmt.Errorf("%s: %v", path, err)
+	}
+	return f.MCPServers["ops"], nil
 }
 
 // parseClaudeGet extracts Scope, Command and Args from `claude mcp get` output.

@@ -43,7 +43,7 @@ func PEM(t testing.TB, k *rsa.PrivateKey, pkcs8 bool) string {
 // Bundle returns a valid bundle struct (source app 123/456, dispatch 124/457).
 func Bundle(t testing.TB) *bundle.Bundle {
 	k := Key(t)
-	return &bundle.Bundle{Version: 1, Owner: "n0ci", Workdir: "~/repo", Apps: map[string]*bundle.App{
+	return &bundle.Bundle{Version: 1, Owner: "n0ci", Apps: map[string]*bundle.App{
 		"source":   {AppID: 123, InstallationID: 456, Slug: "n0ci-ops-source", PrivateKey: PEM(t, k, false)},
 		"dispatch": {AppID: 124, InstallationID: 457, Slug: "n0ci-ops-dispatch", PrivateKey: PEM(t, k, true)},
 	}}

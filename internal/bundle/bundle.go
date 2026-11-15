@@ -36,7 +36,7 @@ func (a *App) Key() *rsa.PrivateKey { return a.key }
 type Bundle struct {
 	Version int             `json:"version"`
 	Owner   string          `json:"owner"`
-	Workdir string          `json:"workdir"`
+	Workdir string          `json:"workdir"` // optional; see ResolveWorkdir
 	Apps    map[string]*App `json:"apps"`
 }
 
@@ -71,9 +71,6 @@ func Decode(s string) (*Bundle, error) {
 	}
 	if !ownerRe.MatchString(b.Owner) {
 		return nil, errors.New("bundle: invalid owner")
-	}
-	if b.Workdir == "" {
-		b.Workdir = "~/repo"
 	}
 	for _, name := range []string{"source", "dispatch"} {
 		a := b.Apps[name]
@@ -130,8 +127,51 @@ func ParseKey(pemText string) (*rsa.PrivateKey, error) {
 	return rk, nil
 }
 
-// WorkdirPath returns the workdir with a leading "~" expanded.
-func (b *Bundle) WorkdirPath() string { return ExpandHome(b.Workdir) }
+// DefaultWorkdir is where the ops repositories live unless overridden. It is a
+// folder of its own so that agents started elsewhere in ~/repo do not pick up
+// the ops workspace guide and MCP registration.
+const DefaultWorkdir = "~/repo/ops"
+
+// WorkdirEnv overrides the workdir (and the bundle's "workdir").
+const WorkdirEnv = "OPS_WORKDIR"
+
+// legacyWorkdir is the default before 0.3.2. Existing bundles carry it
+// explicitly, so it counts as "not configured" rather than as a choice.
+const legacyWorkdir = "~/repo"
+
+// ConfiguredWorkdir is the bundle's "workdir" unless empty or the legacy default.
+func ConfiguredWorkdir(configured string) string {
+	v := strings.TrimSpace(configured)
+	if strings.TrimRight(v, "/") == legacyWorkdir {
+		return ""
+	}
+	return v
+}
+
+// ResolveWorkdir picks the workdir, unexpanded: env (the OPS_WORKDIR value)
+// first, then the bundle's configured "workdir" (the legacy "~/repo" is
+// ignored), then DefaultWorkdir.
+func ResolveWorkdir(env, configured string) string {
+	if v := strings.TrimSpace(env); v != "" {
+		return v
+	}
+	if v := ConfiguredWorkdir(configured); v != "" {
+		return v
+	}
+	return DefaultWorkdir
+}
+
+// Workdir is the workdir for b (which may be nil), unexpanded.
+func Workdir(b *Bundle) string {
+	configured := ""
+	if b != nil {
+		configured = b.Workdir
+	}
+	return ResolveWorkdir(os.Getenv(WorkdirEnv), configured)
+}
+
+// WorkdirPath returns the resolved workdir with a leading "~" expanded.
+func (b *Bundle) WorkdirPath() string { return ExpandHome(Workdir(b)) }
 
 // ExpandHome expands a leading "~" or "~/".
 func ExpandHome(p string) string {

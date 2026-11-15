@@ -15,10 +15,21 @@ the executor is specified in `platform-control/docs/CONTRACT.md`.
 The script installs a pinned, checksum-verified release, then runs `ops login`,
 `ops clone`, `ops doctor` and `ops setup-agents`.
 
+## Workdir
+
+The ops repositories live in their own folder, `~/repo/ops` by default, so that
+projects and agents elsewhere in `~/repo` do not inherit the ops guide or the ops
+MCP tools. Override it with `OPS_WORKDIR=/path` (or a `workdir` in the bundle; the
+pre-0.3.2 default `~/repo` that older bundles carry is ignored). `ops clone` clones
+into it and writes `AGENTS.md`/`CLAUDE.md` there (only when missing), and `ops doctor`
+checks it. Several agents on one repository each use their own `git worktree`.
+The git credential helper stays global for `https://github.com` (git needs it in
+every checkout of an n0ci repository).
+
 ## Commands
 
 ```
-ops login | doctor | clone [--dir DIR] | status | version
+ops login | doctor | clone [--dir DIR] | status | version   (workdir: ~/repo/ops, $OPS_WORKDIR)
 ops setup-agents [--dry-run]
 ops token [source|dispatch]          ops gh [--] <args...>
 ops git-credential <get|store|erase> (configured by `ops login`)
@@ -54,11 +65,19 @@ MCP tools: `ops_status`, `ops_plan` (`admin`, `allow_cost`), `ops_apply` (`plan`
 `ops_gh` (`args`), `ops_run`.
 
 `ops setup-agents` registers `ops mcp` (by the binary's absolute path) with the
-coding agents it finds: Claude Code (`claude mcp add --scope user`), Codex
+coding agents it finds. Claude Code gets it in project scope: `.mcp.json` in the
+workdir (`claude mcp add --scope project`, run there), which Claude Code also reads
+in the repositories below it; the user-scope `ops` entry older versions created is
+removed (`claude mcp remove --scope user ops`), other servers are untouched. Claude
+Code asks once per project to approve a `.mcp.json` server. Codex
 (`[mcp_servers.ops]` in `~/.codex/config.toml`) and OpenCode (`mcp.ops`, or
-`mcp.servers.ops` in the OpenCode 2 layout, in `~/.config/opencode/opencode.json`). It only adds or replaces the `ops` entry, is safe
-to re-run, never rewrites a config with comments (it prints the snippet instead), and
-`--dry-run` shows what it would change. `ops doctor` reports which agents have it.
+`mcp.servers.ops` in the OpenCode 2 layout, in `~/.config/opencode/opencode.json`)
+stay user-wide: Codex reads a project `.codex/config.toml` only in the exact
+directory it starts in, and OpenCode's project config stops at the repository's git
+root, so neither would reach the repositories inside the workdir. It only adds or
+replaces the `ops` entry, is safe to re-run, never rewrites a config with comments
+(it prints the snippet instead), and `--dry-run` shows what it would change.
+`ops doctor` reports which agents have it.
 
 Executor commands print `Run: <url>` immediately, wait (`--timeout 45m`, or
 `--no-wait`), then print the run's `OPS:` result lines. They exit 0 only when the
