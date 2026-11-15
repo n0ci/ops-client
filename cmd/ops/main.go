@@ -26,6 +26,7 @@ Setup:
   ops token [source|dispatch]    print a fresh installation token
   ops gh <args...>               run gh with GH_TOKEN=<source token>
   ops git-credential <get|store|erase>   git credential helper
+  ops setup-agents [--dry-run]   register "ops mcp" with Claude Code, Codex, OpenCode
 
 Executor (platform-control workflows; prints "Run: <url>" first):
   ops plan <stack>               terraform plan at platform main HEAD
@@ -94,6 +95,24 @@ func run(ctx context.Context, args []string) error {
 			return errors.New("doctor: required checks failed")
 		}
 		return nil
+	case "setup-agents":
+		fs := flag.NewFlagSet("ops setup-agents", flag.ContinueOnError)
+		dry := fs.Bool("dry-run", false, "print what would change without changing anything")
+		pos, err := parse(fs, args)
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if len(pos) > 0 {
+			return errors.New("usage: ops setup-agents [--dry-run]")
+		}
+		env, err := ops.DefaultAgentEnv()
+		if err != nil {
+			return err
+		}
+		return ops.SetupAgents(ctx, out, env, *dry)
 	case "gh":
 		o, err := load()
 		if err != nil {

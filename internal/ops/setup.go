@@ -105,10 +105,7 @@ func readBundleInput(stdin *os.File) (string, bool, error) {
 // gitHelperValue names this binary by absolute path: agents' shells are often
 // not login shells, so ~/.local/bin may be missing from their PATH.
 func gitHelperValue() string {
-	if exe, err := os.Executable(); err == nil {
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = resolved
-		}
+	if exe, err := selfPath(); err == nil {
 		if !strings.ContainsAny(exe, " '\"") {
 			return "!" + exe + " git-credential"
 		}
@@ -362,6 +359,20 @@ func Doctor(ctx context.Context, w io.Writer) bool {
 	}
 	_, err = os.Stat(bundle.ExpandHome(wd))
 	add("workdir "+wd+" exists", false, "run `ops clone`", "", err)
+
+	// Informational: ✓ registered, – harness not installed, ✗ missing or stale.
+	e, detail = nil, ""
+	if env, err := DefaultAgentEnv(); err != nil {
+		e = err
+	} else {
+		actx, acancel := context.WithTimeout(ctx, 30*time.Second)
+		var all bool
+		if detail, all = agentStatus(actx, env); !all {
+			e = errors.New(detail)
+		}
+		acancel()
+	}
+	add("MCP registered", true, "run `ops setup-agents`", detail, e)
 
 	ok := true
 	for _, r := range res {

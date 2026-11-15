@@ -1,5 +1,6 @@
 #!/bin/sh
-# Fresh-machine setup for ops: install the pinned release, log in, clone, check.
+# Fresh-machine setup for ops: install the pinned release, log in, clone, check,
+# register the ops MCP server with the coding agents.
 #   curl -fsSL https://raw.githubusercontent.com/n0ci/ops-client/main/bootstrap.sh | sh
 # Copy the "ops bootstrap" note from iCloud Passwords to the clipboard first (macOS).
 set -eu
@@ -90,3 +91,5 @@ else
 fi
 ops clone
 ops doctor
+# Optional: a harness that cannot be configured must not fail the bootstrap.
+ops setup-agents || say "bootstrap: ops setup-agents failed; fix the ✗ lines above and re-run it"

@@ -13,12 +13,13 @@ the executor is specified in `platform-control/docs/CONTRACT.md`.
 3. Add `~/.local/bin` to `PATH` if the script warns, then `ops doctor`.
 
 The script installs a pinned, checksum-verified release, then runs `ops login`,
-`ops clone` and `ops doctor`.
+`ops clone`, `ops doctor` and `ops setup-agents`.
 
 ## Commands
 
 ```
 ops login | doctor | clone [--dir DIR] | status | version
+ops setup-agents [--dry-run]
 ops token [source|dispatch]          ops gh <args...>
 ops git-credential <get|store|erase> (configured by `ops login`)
 ops plan <stack>                     ops apply <stack>
@@ -27,6 +28,13 @@ ops logs <app> [service] [--since 30m]
 ops host <app> <status|ps|df|journal> [target] [--since 30m]
 ops run <run-id|url>                 ops mcp
 ```
+
+`ops setup-agents` registers `ops mcp` (by the binary's absolute path) with the
+coding agents it finds: Claude Code (`claude mcp add --scope user`), Codex
+(`[mcp_servers.ops]` in `~/.codex/config.toml`) and OpenCode (`mcp.ops`, or
+`mcp.servers.ops` in the OpenCode 2 layout, in `~/.config/opencode/opencode.json`). It only adds or replaces the `ops` entry, is safe
+to re-run, never rewrites a config with comments (it prints the snippet instead), and
+`--dry-run` shows what it would change. `ops doctor` reports which agents have it.
 
 Executor commands print `Run: <url>` immediately, wait (`--timeout 45m`, or
 `--no-wait`), then print the run's `OPS:` result lines. They exit 0 only when the

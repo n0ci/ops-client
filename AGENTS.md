@@ -47,4 +47,9 @@ Apps: `abfahrt`, `imoutfyi`. Stacks: see `stacks:` in `n0ci/platform/inventory.y
 
 `ops mcp` serves the same operations as MCP tools (`ops_status`, `ops_plan`,
 `ops_apply`, `ops_deploy`, `ops_rollback`, `ops_logs`, `ops_host`, `ops_run`) over
-stdio, for example `claude mcp add ops -- ops mcp`.
+stdio. `ops setup-agents` registers it with Claude Code, Codex and OpenCode (the
+bootstrap runs it; re-running is safe, `--dry-run` previews). If the `ops_*` tools
+are missing in your session, check the `MCP registered:` line of `ops doctor`, run
+`ops setup-agents`, and tell the user to restart the agent; until then use the CLI.
+The same rules apply to the tools as to the commands (apply/deploy/rollback only
+when asked).
