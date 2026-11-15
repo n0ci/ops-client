@@ -222,10 +222,39 @@ func (o *Ops) Clone(ctx context.Context, w io.Writer, dir string) error {
 	if out, _ := exec.Command("git", "config", "user.email").Output(); strings.TrimSpace(string(out)) == "" {
 		fmt.Fprintln(w, "hint: git user.email is not set; commits need it: git config --global user.email you@example.com")
 	}
+	writeWorkspaceGuide(w, dir)
 	if len(failed) > 0 {
 		return fmt.Errorf("clone failed for: %s", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+// workspaceGuide is written once to the workdir root so agents started there
+// (outside any repository) learn how to operate the systems.
+const workspaceGuide = `# Workspace
+
+Repositories of this machine's ops setup live in this directory (see
+platform/inventory.yaml). For anything beyond editing code, use the ops CLI:
+
+- Deploy: ops deploy <app> [revision]; roll back: ops rollback <app>
+- Infrastructure: edit platform/stacks/<stack>/inputs.tfvars.json, push, then
+  ops plan <stack> / ops apply <stack>
+- Diagnose: ops status, ops host <app> status, ops logs <app> <service>
+- When something fails: ops doctor
+
+Never ask the user for cloud or GitHub tokens. Details: platform/AGENTS.md.
+`
+
+func writeWorkspaceGuide(w io.Writer, dir string) {
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(workspaceGuide), 0o644); err == nil {
+			fmt.Fprintf(w, "+ %s (agent guide)\n", p)
+		}
+	}
 }
 
 type checkResult struct {
