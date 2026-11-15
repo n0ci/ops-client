@@ -14,7 +14,7 @@ var (
 	appRe       = regexp.MustCompile(`^(abfahrt|imoutfyi)$`)
 	targetRe    = regexp.MustCompile(`^[a-z0-9_.@-]{0,64}$`)
 	sinceRe     = regexp.MustCompile(`^[0-9]{1,3}[smhd]$`)
-	hostCmdRe   = regexp.MustCompile(`^(status|ps|logs|df|journal)$`)
+	hostCmdRe   = regexp.MustCompile(`^(status|ps|logs|df|journal|errors)$`)
 	requestIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	repoNameRe  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 )

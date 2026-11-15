@@ -34,7 +34,7 @@ Executor (platform-control workflows; prints "Run: <url>" first):
   ops deploy <app> [revision]    deploy (empty revision = latest successful build)
   ops rollback <app>
   ops logs <app> [service] [--since 30m]
-  ops host <app> <status|ps|df|journal> [target] [--since 30m]
+  ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
   ops run <run-id|url>           reattach to a run and print its results
   ops status                     recent runs + app health
   ops mcp                        MCP stdio server exposing the commands as tools
@@ -219,7 +219,7 @@ var arity = map[string]struct {
 	"deploy":   {1, 2, "deploy <app> [revision]"},
 	"rollback": {1, 1, "rollback <app>"},
 	"logs":     {1, 2, "logs <app> [service] [--since 30m]"},
-	"host":     {2, 3, "host <app> <status|ps|df|journal> [target]"},
+	"host":     {2, 3, "host <app> <status|ps|df|journal|errors> [target]"},
 	"run":      {1, 1, "run <run-id|url> [--timeout 45m]"},
 	"status":   {0, 0, "status"},
 	"mcp":      {0, 0, "mcp"},

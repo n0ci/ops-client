@@ -25,7 +25,7 @@ ops git-credential <get|store|erase> (configured by `ops login`)
 ops plan <stack>                     ops apply <stack>
 ops deploy <app> [revision]          ops rollback <app>
 ops logs <app> [service] [--since 30m]
-ops host <app> <status|ps|df|journal> [target] [--since 30m]
+ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
 ops run <run-id|url>                 ops mcp
 ```
 

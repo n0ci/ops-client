@@ -94,7 +94,7 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 		{
 			Name: "ops_host", Description: "Read-only host diagnostics: status, ps, df, journal (or logs).",
 			InputSchema: schema([]string{"app", "command"}, map[string]map[string]any{
-				"app": appProp, "command": {"type": "string", "enum": []string{"status", "ps", "df", "journal", "logs"}},
+				"app": appProp, "command": {"type": "string", "enum": []string{"status", "ps", "df", "journal", "logs", "errors"}},
 				"target": str("service/unit name (optional)"), "since": str("e.g. 30m (default 30m)"),
 			}),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
