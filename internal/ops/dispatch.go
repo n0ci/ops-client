@@ -150,7 +150,11 @@ func (o *Ops) printResults(ctx context.Context, w io.Writer, runID int64) error 
 		return err
 	}
 	var lines, block []string
+	var failed []string
 	for _, j := range jl.Jobs {
+		if j.Conclusion == "skipped" || j.Conclusion == "cancelled" {
+			continue // never started, so there is no log
+		}
 		var data []byte
 		var err error
 		for attempt := 0; attempt < 3; attempt++ { // logs can lag completion briefly
@@ -162,7 +166,8 @@ func (o *Ops) printResults(ctx context.Context, w io.Writer, runID int64) error 
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("job %q: %w", j.Name, err)
+			failed = append(failed, fmt.Sprintf("job %q: %v", j.Name, err))
+			continue
 		}
 		l, b := ExtractOPS(logText(data))
 		lines, block = append(lines, l...), append(block, b...)
@@ -174,6 +179,9 @@ func (o *Ops) printResults(ctx context.Context, w io.Writer, runID int64) error 
 		fmt.Fprintln(w, "--- output ---")
 		fmt.Fprintln(w, strings.Join(block, "\n"))
 		fmt.Fprintln(w, "--- end ---")
+	}
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
 	}
 	return nil
 }

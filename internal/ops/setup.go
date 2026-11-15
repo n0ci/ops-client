@@ -102,7 +102,22 @@ func readBundleInput(stdin *os.File) (string, bool, error) {
 // ConfigureGit makes `ops git-credential` the only credential helper for
 // https://github.com (the empty value resets helpers inherited from system
 // config such as osxkeychain, so tokens are never persisted).
+// gitHelperValue names this binary by absolute path: agents' shells are often
+// not login shells, so ~/.local/bin may be missing from their PATH.
+func gitHelperValue() string {
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if !strings.ContainsAny(exe, " '\"") {
+			return "!" + exe + " git-credential"
+		}
+	}
+	return helperValue
+}
+
 func ConfigureGit(w io.Writer) error {
+	helperValue := gitHelperValue()
 	prev, _ := gitConfigAll("--global", helperKey)
 	_ = exec.Command("git", "config", "--global", "--unset-all", helperKey).Run() // exit 5 if unset
 	for _, args := range [][]string{
@@ -291,7 +306,7 @@ func Doctor(ctx context.Context, w io.Writer) bool {
 	add("dispatch can list platform-control workflows", false, "install the dispatch app on platform-control (actions: write)", detail, e)
 
 	e, detail = nil, ""
-	if vals, _ := gitConfigAll("--global", helperKey); len(vals) == 0 || vals[len(vals)-1] != helperValue {
+	if vals, _ := gitConfigAll("--global", helperKey); len(vals) == 0 || !isOpsHelper(vals[len(vals)-1]) {
 		e = errors.New("credential.https://github.com.helper is not `!ops git-credential`")
 	} else if _, err := exec.LookPath("ops"); err != nil {
 		e = errors.New("helper set, but `ops` is not on PATH for git")
@@ -355,4 +370,9 @@ func gitHint() string {
 		return "xcode-select --install"
 	}
 	return "install git with your package manager"
+}
+
+// isOpsHelper accepts both the bare and the absolute-path helper forms.
+func isOpsHelper(v string) bool {
+	return v == helperValue || (strings.HasPrefix(v, "!/") && strings.HasSuffix(v, "/ops git-credential"))
 }

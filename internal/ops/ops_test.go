@@ -421,13 +421,13 @@ func TestConfigureGit(t *testing.T) {
 		}
 	}
 	vals, err := gitConfigAll("--global", helperKey)
-	if err != nil || !equal(vals, []string{"", helperValue}) {
+	if err != nil || !equal(vals, []string{"", gitHelperValue()}) {
 		t.Fatalf("helpers = %q, %v", vals, err)
 	}
 	if v, _ := gitConfigAll("--global", httpPathKey); !equal(v, []string{"true"}) {
 		t.Fatalf("useHttpPath = %q", v)
 	}
-	if !strings.Contains(out.String(), "ops git-credential") {
+	if !strings.Contains(out.String(), " git-credential\"") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
