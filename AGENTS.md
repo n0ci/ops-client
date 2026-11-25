@@ -38,7 +38,7 @@ through `ops`, which authenticates as GitHub Apps. Run it from the shell.
 | Undo a deploy | `ops rollback <app>` |
 | Look at a host | `ops host <app> status\|ps\|df\|journal [unit]\|errors`, `ops logs <app> [service] --since 1h` |
 | Root on a host | `ops host <app> exec script.sh` (or `-` for stdin), bash as root |
-| What's going on | `ops status` (recent executor runs + app health) |
+| What's going on | `ops status` (recent executor runs, app health, CI queued > 10 min with no runner online) |
 | A run is taking long | `ops <cmd> --no-wait`, then later `ops run <run-id or URL>` |
 
 Apps: `abfahrt`, `imoutfyi`. Stacks: see `stacks:` in `n0ci/platform/inventory.yaml`.
