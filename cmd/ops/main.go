@@ -56,7 +56,7 @@ Executor (platform-control workflows; prints "Run: <url>" first):
   ops host <app> <status|ps|df|journal|errors> [target] [--since 30m]
   ops host <app> exec <file|->   run a bash script as root on the host (admin)
   ops run <run-id|url>           reattach to a run and print its results
-  ops status                     recent runs + app health
+  ops status                     recent runs + app health + stuck CI queues
   ops mcp                        MCP stdio server exposing the commands as tools
   ops version
 

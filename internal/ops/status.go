@@ -14,7 +14,12 @@ import (
 	"github.com/n0ci/ops-client/internal/github"
 )
 
-// Status prints the last 10 platform-control runs and app health checks.
+// queuedAlert is how long a workflow run may sit queued, with no runner online
+// for its repository, before ops status warns about it.
+const queuedAlert = 10 * time.Minute
+
+// Status prints the last 10 platform-control runs, app health checks and any
+// repository whose CI is stuck without a runner.
 func (o *Ops) Status(ctx context.Context, w io.Writer) error {
 	var errs []error
 	var rl github.RunList
@@ -70,7 +75,67 @@ func (o *Ops) Status(ctx context.Context, w io.Writer) error {
 		fmt.Fprintf(tw, "  %s\t%s\t%s\n", t.label, results[i], t.url)
 	}
 	tw.Flush()
+
+	if stuck := o.stuckQueues(ctx, inv.Repos); len(stuck) > 0 {
+		fmt.Fprintln(w, "CI runners:")
+		for _, line := range stuck {
+			fmt.Fprintln(w, "  "+line)
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// stuckQueues returns one line per repository that has a workflow run queued
+// for longer than queuedAlert while none of its self-hosted runners is online
+// (for example the Docker runners on the owner's Mac are down).
+func (o *Ops) stuckQueues(ctx context.Context, repos []string) []string {
+	lines := make([]string, len(repos))
+	var wg sync.WaitGroup
+	for i, repo := range repos {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			base := fmt.Sprintf("/repos/%s/%s/actions/", o.B.Owner, repo)
+			var rl github.RunList
+			if err := o.GH.Do(ctx, "source", "GET", base+"runs?status=queued&per_page=100", nil, &rl); err != nil {
+				lines[i] = fmt.Sprintf("%s: cannot list queued runs: %v", repo, err)
+				return
+			}
+			n, oldest := 0, time.Duration(0)
+			for _, r := range rl.Runs {
+				if d := time.Since(r.CreatedAt); d > queuedAlert {
+					n, oldest = n+1, max(oldest, d)
+				}
+			}
+			if n == 0 {
+				return
+			}
+			var runners struct {
+				Runners []struct {
+					Status string `json:"status"`
+				} `json:"runners"`
+			}
+			if err := o.GH.Do(ctx, "source", "GET", base+"runners?per_page=100", nil, &runners); err != nil {
+				lines[i] = fmt.Sprintf("%s: %d run(s) queued > %s; cannot list runners: %v", repo, n, queuedAlert, err)
+				return
+			}
+			for _, r := range runners.Runners {
+				if r.Status == "online" {
+					return
+				}
+			}
+			lines[i] = fmt.Sprintf("%s: %d run(s) queued > %s (oldest %s), no runner online: start Docker Desktop, then ~/.gh-runner/start.sh",
+				repo, n, queuedAlert, strings.TrimSuffix(age(oldest), " ago"))
+		}()
+	}
+	wg.Wait()
+	var out []string
+	for _, l := range lines {
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func probe(ctx context.Context, c *http.Client, url string) string {

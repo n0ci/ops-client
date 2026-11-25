@@ -74,7 +74,7 @@ func (o *Ops) MCPServer(version string) *mcp.Server {
 	}
 	return &mcp.Server{Name: "ops", Version: version, Tools: []mcp.Tool{
 		{
-			Name: "ops_status", Description: "Recent platform-control executor runs and app health checks.",
+			Name: "ops_status", Description: "Recent platform-control executor runs, app health checks, and repos whose CI has been queued over 10 min with no runner online.",
 			InputSchema: schema(nil, nil),
 			Handler: run(func(ctx context.Context, sb *strings.Builder, a map[string]any) error {
 				return o.Status(ctx, sb)
